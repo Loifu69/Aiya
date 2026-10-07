@@ -1,0 +1,7 @@
+{
+  "name": "Aiya - Pengingat Minum Dinamis & Sosial",
+  "description": "Aplikasi pengingat minum dinamis dengan alarm suara air, konfirmasi Sudah/Belum, dan fitur saling mengingatkan antar teman.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
