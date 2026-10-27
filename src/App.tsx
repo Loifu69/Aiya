@@ -67,6 +67,7 @@ import {
   firestoreRejectFriendRequest,
   firestoreSendNudge,
   firestoreSubscribeNudges,
+  firestoreRegisterAccount,
   isFirebaseReady,
 } from './utils/firebase';
 
@@ -118,6 +119,9 @@ export default function App() {
   // Firestore Realtime Listeners for Cross-Device Synchronization
   useEffect(() => {
     if (!currentUser || !isFirebaseReady()) return;
+
+    // Ensure active account and status are stored in cloud Firestore
+    firestoreRegisterAccount(currentUser, settings, drinkStatus).catch(() => {});
 
     // Listen to incoming requests from cloud
     const unsubRequests = firestoreSubscribeRequests(currentUser.id, (cloudReqs) => {
