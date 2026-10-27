@@ -37,6 +37,16 @@ export interface FirebaseCustomConfig {
 
 const STORAGE_KEY_FIREBASE = 'aiya_firebase_runtime_config_v1';
 
+// Default configuration from Firebase Project "Aiya"
+const DEFAULT_FIREBASE_CONFIG: FirebaseCustomConfig = {
+  apiKey: "AIzaSyArwGQDf6kUuD5elaqswIy96HNIFDW53sQ",
+  authDomain: "aiya-60746.firebaseapp.com",
+  projectId: "aiya-60746",
+  storageBucket: "aiya-60746.firebasestorage.app",
+  messagingSenderId: "388168705041",
+  appId: "1:388168705041:web:a6384b8809a0ed6848fdb0",
+};
+
 export function getStoredFirebaseConfig(): FirebaseCustomConfig | null {
   // 1. Try env vars first
   if (env.VITE_FIREBASE_PROJECT_ID && env.VITE_FIREBASE_API_KEY) {
@@ -58,7 +68,8 @@ export function getStoredFirebaseConfig(): FirebaseCustomConfig | null {
     // ignore
   }
 
-  return null;
+  // 3. Built-in default project config
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 export function saveStoredFirebaseConfig(config: FirebaseCustomConfig): void {
