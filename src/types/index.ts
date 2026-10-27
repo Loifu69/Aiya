@@ -4,6 +4,16 @@ export type FriendStatus = 'SUDAH_MINUM' | 'WAKTUNYA_MINUM' | 'TERLAMBAT';
 
 export type SoundType = 'river' | 'droplets' | 'rain';
 
+export interface UserAccount {
+  id: string;
+  username: string;
+  password: string;
+  name: string;
+  userCode: string;
+  avatar?: string;
+  createdAt: string;
+}
+
 export interface UserSettings {
   userId: string;
   name: string;

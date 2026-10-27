@@ -10,28 +10,34 @@ import {
   Friend,
   FriendRequest,
   NudgeEvent,
-  ReminderState,
+  UserAccount,
   UserSettings,
 } from './types';
 import {
+  acceptFriendRequest,
   addStoredLog,
   computeFriendStatus,
   DEFAULT_USER,
+  deliverNudgeToUser,
   formatTimeHM,
+  getActiveUser,
+  getOutgoingRequests,
+  getStoredAccounts,
   getStoredDrinkStatus,
   getStoredFriends,
   getStoredLogs,
   getStoredNudges,
   getStoredRequests,
   getStoredSettings,
-  INITIAL_FRIENDS,
-  INITIAL_REQUESTS,
+  logoutUser,
   NUDGE_COOLDOWN_MS,
+  rejectFriendRequest,
+  removeMutualFriendship,
   saveStoredDrinkStatus,
   saveStoredFriends,
   saveStoredNudges,
-  saveStoredRequests,
   saveStoredSettings,
+  sendFriendRequest,
 } from './utils/storage';
 import {
   playNudgeTone,
@@ -40,6 +46,7 @@ import {
   stopWaterSound,
 } from './utils/audio';
 
+import { AuthPage } from './components/AuthPage';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
 import { HomePage } from './components/HomePage';
@@ -52,13 +59,32 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { DocumentScenarioModal } from './components/DocumentScenarioModal';
 
 export default function App() {
-  // Primary application state
-  const [settings, setSettings] = useState<UserSettings>(getStoredSettings);
-  const [drinkStatus, setDrinkStatus] = useState<DrinkStatus>(getStoredDrinkStatus);
-  const [friends, setFriends] = useState<Friend[]>(getStoredFriends);
-  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>(getStoredRequests);
-  const [logs, setLogs] = useState<DrinkLog[]>(getStoredLogs);
-  const [nudges, setNudges] = useState<NudgeEvent[]>(getStoredNudges);
+  // Authentication state
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => getActiveUser());
+  const [allAccounts, setAllAccounts] = useState<UserAccount[]>(getStoredAccounts);
+
+  // Primary application state initialized per active user
+  const [settings, setSettings] = useState<UserSettings>(() =>
+    getStoredSettings(currentUser?.id)
+  );
+  const [drinkStatus, setDrinkStatus] = useState<DrinkStatus>(() =>
+    getStoredDrinkStatus(currentUser?.id)
+  );
+  const [friends, setFriends] = useState<Friend[]>(() =>
+    getStoredFriends(currentUser?.id)
+  );
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>(() =>
+    getStoredRequests(currentUser?.id)
+  );
+  const [outgoingRequests, setOutgoingRequests] = useState<FriendRequest[]>(() =>
+    currentUser ? getOutgoingRequests(currentUser.id) : []
+  );
+  const [logs, setLogs] = useState<DrinkLog[]>(() =>
+    getStoredLogs(currentUser?.id)
+  );
+  const [nudges, setNudges] = useState<NudgeEvent[]>(() =>
+    getStoredNudges(currentUser?.id)
+  );
 
   // Time & Simulator state (allows live ticking + fast forward)
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(Date.now());
@@ -68,10 +94,73 @@ export default function App() {
   const [nudgeSuccessBanner, setNudgeSuccessBanner] = useState<string | null>(null);
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
   const [isSoundMuted, setIsSoundMuted] = useState(false);
-  const [activeProfileId, setActiveProfileId] = useState<string>('user-001');
+
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstalledPwa, setIsInstalledPwa] = useState(false);
 
   // Track if sound is currently ringing for reminder
   const isRingingRef = useRef(false);
+
+  // Detect PWA installability
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone) {
+      setIsInstalledPwa(true);
+    }
+
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalledPwa(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const choice = await deferredPrompt.userChoice;
+    if (choice.outcome === 'accepted') {
+      setDeferredPrompt(null);
+      setIsInstalledPwa(true);
+    }
+  };
+
+  // Switch/Load all data when currentUser changes
+  const loadUserData = useCallback((account: UserAccount) => {
+    setCurrentUser(account);
+    setAllAccounts(getStoredAccounts());
+    setSettings(getStoredSettings(account.id));
+    setDrinkStatus(getStoredDrinkStatus(account.id));
+    setFriends(getStoredFriends(account.id));
+    setFriendRequests(getStoredRequests(account.id));
+    setOutgoingRequests(getOutgoingRequests(account.id));
+    setLogs(getStoredLogs(account.id));
+    setNudges(getStoredNudges(account.id));
+    setCurrentTab('home');
+  }, []);
+
+  const handleAuthSuccess = (account: UserAccount) => {
+    loadUserData(account);
+  };
+
+  const handleLogout = useCallback(() => {
+    stopWaterSound();
+    isRingingRef.current = false;
+    logoutUser();
+    setCurrentUser(null);
+  }, []);
 
   // Live timer tick every 1000ms
   useEffect(() => {
@@ -80,6 +169,33 @@ export default function App() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Periodically refresh friend status, requests, and nudges
+  useEffect(() => {
+    if (!currentUser) return;
+    const interval = setInterval(() => {
+      setFriends(getStoredFriends(currentUser.id));
+      setFriendRequests(getStoredRequests(currentUser.id));
+      setOutgoingRequests(getOutgoingRequests(currentUser.id));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
+
+  // Check incoming unread nudges for active user
+  useEffect(() => {
+    if (!currentUser) return;
+    const userNudges = getStoredNudges(currentUser.id);
+    const unread = userNudges.find((n) => !n.isRead);
+    if (unread) {
+      setActiveNudge(unread);
+      playNudgeTone();
+      const updated = userNudges.map((n) =>
+        n.id === unread.id ? { ...n, isRead: true } : n
+      );
+      setNudges(updated);
+      saveStoredNudges(updated, currentUser.id);
+    }
+  }, [currentUser, currentTimeMs]);
 
   // Request browser notification permission gently on mount
   useEffect(() => {
@@ -92,8 +208,9 @@ export default function App() {
     }
   }, []);
 
-  // Check alarm time trigger
+  // Check alarm time trigger (Section 5.2, 12.1)
   useEffect(() => {
+    if (!currentUser) return;
     const nextAlarmMs = new Date(drinkStatus.nextAlarmAt).getTime();
     if (currentTimeMs >= nextAlarmMs && drinkStatus.reminderState === 'IDLE') {
       // Check quiet hours if enabled
@@ -113,7 +230,7 @@ export default function App() {
         reminderState: 'RINGING',
       };
       setDrinkStatus(updated);
-      saveStoredDrinkStatus(updated);
+      saveStoredDrinkStatus(updated, currentUser.id);
 
       if (!inQuiet && !isSoundMuted) {
         isRingingRef.current = true;
@@ -132,10 +249,11 @@ export default function App() {
         }
       }
     }
-  }, [currentTimeMs, drinkStatus, settings, isSoundMuted]);
+  }, [currentUser, currentTimeMs, drinkStatus, settings, isSoundMuted]);
 
   // Handler: "Sudah" (Section 17.1 of PDF)
   const handleAnswerSudah = useCallback(() => {
+    if (!currentUser) return;
     stopWaterSound();
     isRingingRef.current = false;
     playSuccessChime();
@@ -144,7 +262,7 @@ export default function App() {
     const nextTimeIso = new Date(currentTimeMs + settings.intervalMinutes * 60 * 1000).toISOString();
 
     const newStatus: DrinkStatus = {
-      userId: settings.userId,
+      userId: currentUser.id,
       lastDrinkAt: nowIso,
       dueAt: nextTimeIso,
       nextAlarmAt: nextTimeIso,
@@ -152,24 +270,25 @@ export default function App() {
     };
 
     setDrinkStatus(newStatus);
-    saveStoredDrinkStatus(newStatus);
+    saveStoredDrinkStatus(newStatus, currentUser.id);
 
     // Record log
     const newLog = addStoredLog({
-      userId: settings.userId,
+      userId: currentUser.id,
       action: 'SUDAH',
       timestamp: nowIso,
       note: 'Minum setelah pengingat air berbunyi',
-    });
+    }, currentUser.id);
     setLogs((prev) => [newLog, ...prev]);
 
     // Copy from Section 22.5
     const feedback = `Bagus! Pengingat berikutnya jam ${formatTimeHM(nextTimeIso)}.`;
     setLastFeedbackMessage(feedback);
-  }, [currentTimeMs, settings]);
+  }, [currentTimeMs, currentUser, settings]);
 
   // Handler: "Belum" (Section 17.2 of PDF)
   const handleAnswerBelum = useCallback(() => {
+    if (!currentUser) return;
     stopWaterSound();
     isRingingRef.current = false;
 
@@ -183,24 +302,25 @@ export default function App() {
     };
 
     setDrinkStatus(newStatus);
-    saveStoredDrinkStatus(newStatus);
+    saveStoredDrinkStatus(newStatus, currentUser.id);
 
     // Record log
     const newLog = addStoredLog({
-      userId: settings.userId,
+      userId: currentUser.id,
       action: 'BELUM',
       timestamp: new Date(currentTimeMs).toISOString(),
       note: `Ditunda ${settings.snoozeMinutes} menit`,
-    });
+    }, currentUser.id);
     setLogs((prev) => [newLog, ...prev]);
 
     // Copy from Section 22.5
     const feedback = `Oke, Aiya ingatkan lagi ${settings.snoozeMinutes} menit lagi.`;
     setLastFeedbackMessage(feedback);
-  }, [currentTimeMs, drinkStatus, settings]);
+  }, [currentTimeMs, currentUser, drinkStatus, settings]);
 
   // Handler: Drink Now (outside scheduled alarm - Section 9.2 & 13)
   const handleDrinkNowOutsideAlarm = useCallback(() => {
+    if (!currentUser) return;
     stopWaterSound();
     isRingingRef.current = false;
     playSuccessChime();
@@ -209,7 +329,7 @@ export default function App() {
     const nextTimeIso = new Date(currentTimeMs + settings.intervalMinutes * 60 * 1000).toISOString();
 
     const newStatus: DrinkStatus = {
-      userId: settings.userId,
+      userId: currentUser.id,
       lastDrinkAt: nowIso,
       dueAt: nextTimeIso,
       nextAlarmAt: nextTimeIso,
@@ -217,34 +337,35 @@ export default function App() {
     };
 
     setDrinkStatus(newStatus);
-    saveStoredDrinkStatus(newStatus);
+    saveStoredDrinkStatus(newStatus, currentUser.id);
 
     const newLog = addStoredLog({
-      userId: settings.userId,
+      userId: currentUser.id,
       action: 'MANUAL',
       timestamp: nowIso,
       note: 'Minum air secara mandiri di luar alarm',
-    });
+    }, currentUser.id);
     setLogs((prev) => [newLog, ...prev]);
 
     setLastFeedbackMessage(`Minum tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
-  }, [currentTimeMs, settings]);
+  }, [currentTimeMs, currentUser, settings]);
 
   // Trigger test alarm immediately
   const handleTriggerAlarmNow = useCallback(() => {
+    if (!currentUser) return;
     const updated: DrinkStatus = {
       ...drinkStatus,
       nextAlarmAt: new Date(currentTimeMs).toISOString(),
       reminderState: 'RINGING',
     };
     setDrinkStatus(updated);
-    saveStoredDrinkStatus(updated);
+    saveStoredDrinkStatus(updated, currentUser.id);
 
     if (!isSoundMuted) {
       isRingingRef.current = true;
       playWaterSound(settings.soundType, settings.volume);
     }
-  }, [currentTimeMs, drinkStatus, settings, isSoundMuted]);
+  }, [currentTimeMs, currentUser, drinkStatus, settings, isSoundMuted]);
 
   // Simulator: fast forward time
   const handleFastForward = useCallback((minutes: number) => {
@@ -253,6 +374,7 @@ export default function App() {
 
   // Nudge friend (Section 17.4)
   const handleNudgeFriend = useCallback((targetFriend: Friend) => {
+    if (!currentUser) return;
     const status = computeFriendStatus(targetFriend.dueAt, currentTimeMs);
     if (status !== 'TERLAMBAT') {
       alert('Teman belum terlambat');
@@ -270,142 +392,109 @@ export default function App() {
       f.id === targetFriend.id ? { ...f, lastNudgeAt: nowIso } : f
     );
     setFriends(updatedFriends);
-    saveStoredFriends(updatedFriends);
+    saveStoredFriends(updatedFriends, currentUser.id);
 
-    // Create a nudge notification
-    const nudgeEvent: NudgeEvent = {
-      id: `nudge-${Date.now()}`,
-      fromUserId: settings.userId,
-      fromName: settings.name,
-      toUserId: targetFriend.id,
-      timestamp: nowIso,
-      message: `${settings.name} mengingatkanmu untuk minum.`,
-      isRead: false,
-    };
-    const updatedNudges = [nudgeEvent, ...nudges];
-    setNudges(updatedNudges);
-    saveStoredNudges(updatedNudges);
+    // Deliver nudge directly to target user account inbox
+    deliverNudgeToUser(currentUser, targetFriend.id, nowIso);
 
     setNudgeSuccessBanner(`Pengingat berhasil dikirim ke ${targetFriend.name}!`);
     setTimeout(() => setNudgeSuccessBanner(null), 3500);
-  }, [currentTimeMs, friends, nudges, settings]);
+  }, [currentTimeMs, currentUser, friends]);
 
-  // Add friend (Section 11)
-  const handleAddFriend = useCallback((identifier: string): { success: boolean; message: string } => {
-    const cleaned = identifier.trim().toUpperCase();
+  // Send Friend Request (Section 10.4: Two-Way Approval)
+  const handleSendFriendRequest = useCallback((identifier: string): { success: boolean; message: string } => {
+    if (!currentUser) return { success: false, message: 'Harap masuk terlebih dahulu' };
+    const cleaned = identifier.trim().toLowerCase();
 
     // Check self
     if (
-      cleaned === settings.userCode.toUpperCase() ||
-      cleaned === settings.name.toUpperCase() ||
-      cleaned === settings.userId.toUpperCase()
+      cleaned === currentUser.username.toLowerCase() ||
+      cleaned === currentUser.userCode.toLowerCase() ||
+      cleaned === currentUser.name.toLowerCase() ||
+      cleaned === currentUser.id.toLowerCase()
     ) {
       return { success: false, message: 'Tidak dapat menambahkan diri sendiri sebagai teman' };
     }
 
-    // Check existing
-    const alreadyExists = friends.some(
-      (f) =>
-        f.userCode.toUpperCase() === cleaned ||
-        f.name.toUpperCase() === cleaned ||
-        f.id.toUpperCase() === cleaned
+    // Search registered accounts in database
+    const accounts = getStoredAccounts();
+    const matched = accounts.find(
+      (a) =>
+        a.username.toLowerCase() === cleaned ||
+        a.userCode.toLowerCase() === cleaned ||
+        a.name.toLowerCase() === cleaned
     );
-    if (alreadyExists) {
-      return { success: false, message: 'Teman sudah ada di dalam daftar pertemananmu' };
+
+    if (!matched) {
+      return {
+        success: false,
+        message: 'Kode atau username teman tidak ditemukan. Pastikan akun teman sudah terdaftar.',
+      };
     }
 
-    // Create new friend
-    const randomName = identifier.startsWith('AIYA-')
-      ? identifier.replace('AIYA-', '')
-      : identifier;
+    const res = sendFriendRequest(currentUser, matched);
+    // Refresh outgoing requests & friends
+    setOutgoingRequests(getOutgoingRequests(currentUser.id));
+    setFriends(getStoredFriends(currentUser.id));
+    return res;
+  }, [currentUser]);
 
-    const newFriend: Friend = {
-      id: `user-${Date.now()}`,
-      name: randomName.charAt(0).toUpperCase() + randomName.slice(1).toLowerCase(),
-      userCode: identifier.startsWith('AIYA-') ? identifier.toUpperCase() : `AIYA-${cleaned}`,
-      avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&auto=format&fit=crop&q=80',
-      lastDrinkAt: new Date(currentTimeMs - 45 * 60 * 1000).toISOString(),
-      dueAt: new Date(currentTimeMs + 135 * 60 * 1000).toISOString(),
-      lastNudgeAt: null,
-    };
-
-    const updated = [newFriend, ...friends];
-    setFriends(updated);
-    saveStoredFriends(updated);
-
-    return {
-      success: true,
-      message: `Berhasil menambahkan ${newFriend.name} sebagai teman!`,
-    };
-  }, [currentTimeMs, friends, settings]);
-
-  // Accept Friend Request
+  // Accept Friend Request -> Establishes reciprocal two-way friendship
   const handleAcceptRequest = useCallback((reqId: string) => {
-    const req = friendRequests.find((r) => r.id === reqId);
-    if (!req) return;
-
-    const newFriend: Friend = {
-      id: req.fromUserId,
-      name: req.fromName,
-      userCode: req.fromCode,
-      avatar: req.fromAvatar,
-      lastDrinkAt: new Date(currentTimeMs - 20 * 60 * 1000).toISOString(),
-      dueAt: new Date(currentTimeMs + 160 * 60 * 1000).toISOString(),
-      lastNudgeAt: null,
-    };
-
-    const updatedFriends = [newFriend, ...friends];
-    const updatedRequests = friendRequests.filter((r) => r.id !== reqId);
-
-    setFriends(updatedFriends);
-    setFriendRequests(updatedRequests);
-    saveStoredFriends(updatedFriends);
-    saveStoredRequests(updatedRequests);
-
-    setNudgeSuccessBanner(`${req.fromName} telah diterima sebagai teman!`);
-    setTimeout(() => setNudgeSuccessBanner(null), 3000);
-  }, [currentTimeMs, friendRequests, friends]);
+    if (!currentUser) return;
+    const res = acceptFriendRequest(currentUser, reqId);
+    if (res.success) {
+      setFriends(getStoredFriends(currentUser.id));
+      setFriendRequests(getStoredRequests(currentUser.id));
+      setOutgoingRequests(getOutgoingRequests(currentUser.id));
+      setNudgeSuccessBanner(res.message);
+      setTimeout(() => setNudgeSuccessBanner(null), 3500);
+    }
+  }, [currentUser]);
 
   // Reject Request
   const handleRejectRequest = useCallback((reqId: string) => {
-    const updated = friendRequests.filter((r) => r.id !== reqId);
-    setFriendRequests(updated);
-    saveStoredRequests(updated);
-  }, [friendRequests]);
+    if (!currentUser) return;
+    rejectFriendRequest(currentUser.id, reqId);
+    setFriendRequests(getStoredRequests(currentUser.id));
+  }, [currentUser]);
 
-  // Remove Friend
+  // Remove Mutual Friend
   const handleRemoveFriend = useCallback((friendId: string) => {
-    const updated = friends.filter((f) => f.id !== friendId);
-    setFriends(updated);
-    saveStoredFriends(updated);
-  }, [friends]);
+    if (!currentUser) return;
+    removeMutualFriendship(currentUser.id, friendId);
+    setFriends(getStoredFriends(currentUser.id));
+  }, [currentUser]);
 
   // Mute Friend
   const handleToggleMuteFriend = useCallback((friendId: string) => {
+    if (!currentUser) return;
     const updated = friends.map((f) =>
       f.id === friendId ? { ...f, isMuted: !f.isMuted } : f
     );
     setFriends(updated);
-    saveStoredFriends(updated);
-  }, [friends]);
+    saveStoredFriends(updated, currentUser.id);
+  }, [currentUser, friends]);
 
   // Update Settings
   const handleUpdateSettings = useCallback((newPartial: Partial<UserSettings>) => {
+    if (!currentUser) return { success: false };
     const updated = { ...settings, ...newPartial };
     setSettings(updated);
-    saveStoredSettings(updated);
+    saveStoredSettings(updated, currentUser.id);
     return { success: true };
-  }, [settings]);
+  }, [currentUser, settings]);
 
   // Reset to initial document scenario
   const handleResetToDemoScenario = useCallback(() => {
+    if (!currentUser) return;
     stopWaterSound();
     isRingingRef.current = false;
 
-    const defaultUser = { ...DEFAULT_USER };
+    const defaultUser = { ...DEFAULT_USER, userId: currentUser.id, name: currentUser.name, userCode: currentUser.userCode };
     const nextTime = new Date(currentTimeMs + defaultUser.intervalMinutes * 60 * 1000).toISOString();
     const defaultStatus: DrinkStatus = {
-      userId: defaultUser.userId,
+      userId: currentUser.id,
       lastDrinkAt: new Date(currentTimeMs - 10 * 60 * 1000).toISOString(),
       dueAt: nextTime,
       nextAlarmAt: nextTime,
@@ -414,19 +503,16 @@ export default function App() {
 
     setSettings(defaultUser);
     setDrinkStatus(defaultStatus);
-    setFriends(INITIAL_FRIENDS);
-    setFriendRequests(INITIAL_REQUESTS);
-    saveStoredSettings(defaultUser);
-    saveStoredDrinkStatus(defaultStatus);
-    saveStoredFriends(INITIAL_FRIENDS);
-    saveStoredRequests(INITIAL_REQUESTS);
+    saveStoredSettings(defaultUser, currentUser.id);
+    saveStoredDrinkStatus(defaultStatus, currentUser.id);
 
-    setLastFeedbackMessage('Data berhasil di-reset sesuai spesifikasi dokumen!');
+    setLastFeedbackMessage('Data berhasil di-reset!');
     setTimeout(() => setLastFeedbackMessage(null), 3000);
-  }, [currentTimeMs]);
+  }, [currentTimeMs, currentUser]);
 
   // Apply Document Scenario B (09:00 Belum, 09:10 Belum, 09:20 Sudah -> 12:20)
   const handleApplyScenarioB = useCallback(() => {
+    if (!currentUser) return;
     stopWaterSound();
     isRingingRef.current = false;
 
@@ -439,7 +525,7 @@ export default function App() {
     // After answering "Sudah" at 09:20 with 3-hour interval:
     const nextDrink = new Date(mockNowMs + 180 * 60 * 1000); // 12:20!
     const updatedStatus: DrinkStatus = {
-      userId: settings.userId,
+      userId: currentUser.id,
       lastDrinkAt: now.toISOString(),
       dueAt: nextDrink.toISOString(),
       nextAlarmAt: nextDrink.toISOString(),
@@ -447,69 +533,21 @@ export default function App() {
     };
 
     setDrinkStatus(updatedStatus);
-    saveStoredDrinkStatus(updatedStatus);
+    saveStoredDrinkStatus(updatedStatus, currentUser.id);
 
     addStoredLog({
-      userId: settings.userId,
+      userId: currentUser.id,
       action: 'SUDAH',
       timestamp: now.toISOString(),
       note: 'Skenario B: Terakhir minum 09:20, berikutnya 12:20',
-    });
+    }, currentUser.id);
 
     setLastFeedbackMessage('Skenario B aktif: Waktu disetel ke 09:20, jadwal berikutnya 12:20!');
-  }, [settings]);
-
-  // Switch demo profile (Rina vs Sari vs Budi)
-  const handleSwitchProfile = useCallback((profileId: string) => {
-    stopWaterSound();
-    isRingingRef.current = false;
-    setActiveProfileId(profileId);
-
-    if (profileId === 'user-001') {
-      // Rina (Standard User)
-      setSettings((prev) => ({ ...prev, userId: 'user-001', name: 'Rina', userCode: 'AIYA-RINA' }));
-    } else if (profileId === 'user-002') {
-      // Sari (LATE USER - perfect for seeing how friends view her and testing nudges)
-      setSettings((prev) => ({ ...prev, userId: 'user-002', name: 'Sari', userCode: 'AIYA-SARI' }));
-      // Set status overdue
-      const overdueStatus: DrinkStatus = {
-        userId: 'user-002',
-        lastDrinkAt: new Date(currentTimeMs - 3.5 * 60 * 60 * 1000).toISOString(),
-        dueAt: new Date(currentTimeMs - 35 * 60 * 1000).toISOString(),
-        nextAlarmAt: new Date(currentTimeMs - 35 * 60 * 1000).toISOString(),
-        reminderState: 'IDLE',
-      };
-      setDrinkStatus(overdueStatus);
-      saveStoredDrinkStatus(overdueStatus);
-      // Simulate incoming nudge from Rina!
-      const mockNudge: NudgeEvent = {
-        id: `nudge-demo-${Date.now()}`,
-        fromUserId: 'user-001',
-        fromName: 'Rina',
-        toUserId: 'user-002',
-        timestamp: new Date(currentTimeMs).toISOString(),
-        message: 'Rina mengingatkanmu untuk minum.',
-        isRead: false,
-      };
-      setActiveNudge(mockNudge);
-      playNudgeTone();
-    } else {
-      // Budi
-      setSettings((prev) => ({ ...prev, userId: 'user-003', name: 'Budi', userCode: 'AIYA-BUDI' }));
-      const normalStatus: DrinkStatus = {
-        userId: 'user-003',
-        lastDrinkAt: new Date(currentTimeMs - 40 * 60 * 1000).toISOString(),
-        dueAt: new Date(currentTimeMs + 140 * 60 * 1000).toISOString(),
-        nextAlarmAt: new Date(currentTimeMs + 140 * 60 * 1000).toISOString(),
-        reminderState: 'IDLE',
-      };
-      setDrinkStatus(normalStatus);
-      saveStoredDrinkStatus(normalStatus);
-    }
-  }, [currentTimeMs]);
+  }, [currentUser]);
 
   // Complete onboarding
   const handleCompleteOnboarding = (data: { name: string; intervalMinutes: number; snoozeMinutes: number }) => {
+    if (!currentUser) return;
     const updated: UserSettings = {
       ...settings,
       name: data.name,
@@ -518,7 +556,7 @@ export default function App() {
       isOnboarded: true,
     };
     setSettings(updated);
-    saveStoredSettings(updated);
+    saveStoredSettings(updated, currentUser.id);
 
     const nowIso = new Date(currentTimeMs).toISOString();
     const nextIso = new Date(currentTimeMs + data.intervalMinutes * 60 * 1000).toISOString();
@@ -530,15 +568,19 @@ export default function App() {
       reminderState: 'IDLE',
     };
     setDrinkStatus(newStatus);
-    saveStoredDrinkStatus(newStatus);
+    saveStoredDrinkStatus(newStatus, currentUser.id);
   };
+
+  // If user is not authenticated, display the Register/Login page!
+  if (!currentUser) {
+    return <AuthPage onAuthSuccess={handleAuthSuccess} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* Top Header */}
       <Header
-        userName={settings.name}
-        userCode={settings.userCode}
+        currentUser={currentUser}
         reminderState={drinkStatus.reminderState}
         isSoundMuted={isSoundMuted}
         onToggleMute={() => {
@@ -546,8 +588,9 @@ export default function App() {
           if (!isSoundMuted) stopWaterSound();
         }}
         onOpenScenarioModal={() => setIsScenarioModalOpen(true)}
-        activeProfileId={activeProfileId}
-        onSwitchProfile={handleSwitchProfile}
+        onLogout={handleLogout}
+        canInstallPwa={Boolean(deferredPrompt) && !isInstalledPwa}
+        onInstallPwa={handleInstallPwa}
       />
 
       {/* Navigation tabs */}
@@ -574,12 +617,14 @@ export default function App() {
 
         {currentTab === 'friends' && (
           <FriendsPage
-            currentUser={settings}
+            currentUser={currentUser}
             friends={friends}
             friendRequests={friendRequests}
+            outgoingRequests={outgoingRequests}
+            allAccounts={allAccounts}
             currentTimeMs={currentTimeMs}
             onNudgeFriend={handleNudgeFriend}
-            onAddFriend={handleAddFriend}
+            onSendFriendRequest={handleSendFriendRequest}
             onAcceptRequest={handleAcceptRequest}
             onRejectRequest={handleRejectRequest}
             onRemoveFriend={handleRemoveFriend}
@@ -597,9 +642,11 @@ export default function App() {
 
         {currentTab === 'settings' && (
           <SettingsPage
+            currentUser={currentUser}
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             onResetToDemoScenario={handleResetToDemoScenario}
+            onLogout={handleLogout}
           />
         )}
       </main>

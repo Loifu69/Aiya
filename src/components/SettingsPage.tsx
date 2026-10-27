@@ -12,20 +12,25 @@ import {
   Sparkles,
   AlertCircle,
   Save,
+  LogOut,
 } from 'lucide-react';
-import { SoundType, UserSettings } from '../types';
+import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
 
 interface SettingsPageProps {
+  currentUser: UserAccount;
   settings: UserSettings;
   onUpdateSettings: (newSettings: Partial<UserSettings>) => { success: boolean; message?: string };
   onResetToDemoScenario: () => void;
+  onLogout: () => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
+  currentUser,
   settings,
   onUpdateSettings,
   onResetToDemoScenario,
+  onLogout,
 }) => {
   const [name, setName] = useState(settings.name);
   const [intervalMinutes, setIntervalMinutes] = useState(settings.intervalMinutes);
@@ -180,6 +185,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <span>{copiedCode ? 'Disalin' : 'Salin'}</span>
               </button>
             </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+            <span className="text-slate-500">
+              Username: <strong className="text-slate-700">@{currentUser.username}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Keluar Akun</span>
+            </button>
           </div>
         </div>
 
