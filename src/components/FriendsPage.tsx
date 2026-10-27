@@ -56,7 +56,20 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
   onToggleMuteFriend,
   activeNudgeSuccessMessage,
 }) => {
-  const [activeTab, setActiveTab] = useState<'list' | 'requests' | 'add'>('list');
+  const [activeTab, setActiveTabState] = useState<'list' | 'requests' | 'add'>(() => {
+    try {
+      const saved = localStorage.getItem('aiya_friends_subtab_v1');
+      if (saved === 'list' || saved === 'requests' || saved === 'add') return saved;
+    } catch {}
+    return 'list';
+  });
+
+  const setActiveTab = (tab: 'list' | 'requests' | 'add') => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('aiya_friends_subtab_v1', tab);
+    } catch {}
+  };
   const [friendInput, setFriendInput] = useState('');
   const [addFeedback, setAddFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 

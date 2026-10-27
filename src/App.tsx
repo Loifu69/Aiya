@@ -77,6 +77,24 @@ import {
   isFirebaseReady,
 } from './utils/firebase';
 
+const STORAGE_KEY_TAB = 'aiya_last_active_tab_v1';
+
+function getInitialTab(): NavTab {
+  try {
+    const hash = window.location.hash.replace('#', '').toLowerCase();
+    if (hash === 'home' || hash === 'friends' || hash === 'history' || hash === 'settings') {
+      return hash as NavTab;
+    }
+    const saved = localStorage.getItem(STORAGE_KEY_TAB);
+    if (saved === 'home' || saved === 'friends' || saved === 'history' || saved === 'settings') {
+      return saved as NavTab;
+    }
+  } catch {
+    // fallback
+  }
+  return 'home';
+}
+
 export default function App() {
   // Authentication state
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => getActiveUser());
@@ -107,7 +125,7 @@ export default function App() {
 
   // Time & Simulator state (allows live ticking + fast forward)
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(Date.now());
-  const [currentTab, setCurrentTab] = useState<NavTab>('home');
+  const [currentTab, setCurrentTab] = useState<NavTab>(getInitialTab);
   const [activeNudge, setActiveNudge] = useState<NudgeEvent | null>(null);
   const [lastFeedbackMessage, setLastFeedbackMessage] = useState<string | null>(null);
   const [nudgeSuccessBanner, setNudgeSuccessBanner] = useState<string | null>(null);
@@ -234,7 +252,31 @@ export default function App() {
     setOutgoingRequests(getOutgoingRequests(account.id));
     setLogs(getStoredLogs(account.id));
     setNudges(getStoredNudges(account.id));
-    setCurrentTab('home');
+  }, []);
+
+  const handleSelectTab = useCallback((tab: NavTab) => {
+    setCurrentTab(tab);
+    try {
+      localStorage.setItem(STORAGE_KEY_TAB, tab);
+      window.location.hash = tab;
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Listen to hash changes (e.g. browser back/forward buttons)
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.replace('#', '').toLowerCase();
+      if (hash === 'home' || hash === 'friends' || hash === 'history' || hash === 'settings') {
+        setCurrentTab(hash as NavTab);
+        try {
+          localStorage.setItem(STORAGE_KEY_TAB, hash);
+        } catch {}
+      }
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
   }, []);
 
   const handleAuthSuccess = (account: UserAccount) => {
@@ -765,7 +807,7 @@ export default function App() {
       {/* Navigation tabs */}
       <Navigation
         currentTab={currentTab}
-        onSelectTab={setCurrentTab}
+        onSelectTab={handleSelectTab}
         pendingRequestsCount={friendRequests.length}
       />
 
