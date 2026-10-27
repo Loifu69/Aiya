@@ -63,11 +63,16 @@ import {
   firestoreSubscribeDrinkStatus,
   firestoreSendFriendRequest,
   firestoreSubscribeRequests,
+  firestoreSubscribeOutgoingRequests,
   firestoreAcceptFriendRequest,
   firestoreRejectFriendRequest,
   firestoreSendNudge,
   firestoreSubscribeNudges,
   firestoreRegisterAccount,
+  firestoreGetAllAccounts,
+  firestoreFindAccountByUsername,
+  firestoreSaveUserFriends,
+  firestoreSubscribeUserFriends,
   isFirebaseReady,
 } from './utils/firebase';
 
@@ -120,15 +125,40 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !isFirebaseReady()) return;
 
-    // Ensure active account and status are stored in cloud Firestore
+    // 1. Ensure active account and status are stored in cloud Firestore
     firestoreRegisterAccount(currentUser, settings, drinkStatus).catch(() => {});
 
-    // Listen to incoming requests from cloud
+    // 2. Load all registered accounts from Firestore to enable friend discovery across devices
+    firestoreGetAllAccounts().then((cloudAccounts) => {
+      if (cloudAccounts && cloudAccounts.length > 0) {
+        const local = getStoredAccounts();
+        const mergedMap = new Map<string, UserAccount>();
+        local.forEach((a) => mergedMap.set(a.id, a));
+        cloudAccounts.forEach((a) => mergedMap.set(a.id, a));
+        const merged = Array.from(mergedMap.values());
+        saveStoredAccounts(merged);
+        setAllAccounts(merged);
+      }
+    }).catch(() => {});
+
+    // 3. Listen to incoming friend requests in real-time
     const unsubRequests = firestoreSubscribeRequests(currentUser.id, (cloudReqs) => {
       setFriendRequests(cloudReqs);
+      saveStoredRequests(cloudReqs, currentUser.id);
     });
 
-    // Listen to incoming nudges from cloud
+    // 4. Listen to outgoing friend requests in real-time
+    const unsubOutgoing = firestoreSubscribeOutgoingRequests(currentUser.id, (cloudOut) => {
+      setOutgoingRequests(cloudOut);
+    });
+
+    // 5. Listen to reciprocal user friends list in real-time
+    const unsubFriends = firestoreSubscribeUserFriends(currentUser.id, (cloudFriends) => {
+      setFriends(cloudFriends);
+      saveStoredFriends(cloudFriends, currentUser.id);
+    });
+
+    // 6. Listen to incoming nudges from cloud
     const unsubNudges = firestoreSubscribeNudges(currentUser.id, (cloudNudge) => {
       setActiveNudge(cloudNudge);
       playNudgeTone();
@@ -136,6 +166,8 @@ export default function App() {
 
     return () => {
       if (unsubRequests) unsubRequests();
+      if (unsubOutgoing) unsubOutgoing();
+      if (unsubFriends) unsubFriends();
       if (unsubNudges) unsubNudges();
     };
   }, [currentUser]);
@@ -432,15 +464,18 @@ export default function App() {
     setFriends(updatedFriends);
     saveStoredFriends(updatedFriends, currentUser.id);
 
-    // Deliver nudge directly to target user account inbox
-    deliverNudgeToUser(currentUser, targetFriend.id, nowIso);
+    // Deliver nudge directly to target user account inbox & cloud
+    const nudgeEvent = deliverNudgeToUser(currentUser, targetFriend.id, nowIso);
+    if (isFirebaseReady() && nudgeEvent) {
+      firestoreSendNudge(nudgeEvent).catch(console.error);
+    }
 
     setNudgeSuccessBanner(`Pengingat berhasil dikirim ke ${targetFriend.name}!`);
     setTimeout(() => setNudgeSuccessBanner(null), 3500);
   }, [currentTimeMs, currentUser, friends]);
 
   // Send Friend Request (Section 10.4: Two-Way Approval)
-  const handleSendFriendRequest = useCallback((identifier: string): { success: boolean; message: string } => {
+  const handleSendFriendRequest = useCallback(async (identifier: string): Promise<{ success: boolean; message: string }> => {
     if (!currentUser) return { success: false, message: 'Harap masuk terlebih dahulu' };
     const cleaned = identifier.trim().toLowerCase();
 
@@ -454,14 +489,24 @@ export default function App() {
       return { success: false, message: 'Tidak dapat menambahkan diri sendiri sebagai teman' };
     }
 
-    // Search registered accounts in database
+    // Search registered accounts in database (local + cloud fallback)
     const accounts = getStoredAccounts();
-    const matched = accounts.find(
+    let matched = accounts.find(
       (a) =>
         a.username.toLowerCase() === cleaned ||
         a.userCode.toLowerCase() === cleaned ||
         a.name.toLowerCase() === cleaned
     );
+
+    if (!matched && isFirebaseReady()) {
+      const cloudUser = await firestoreFindAccountByUsername(cleaned);
+      if (cloudUser) {
+        matched = cloudUser;
+        const merged = [...accounts.filter((a) => a.id !== cloudUser.id), cloudUser];
+        saveStoredAccounts(merged);
+        setAllAccounts(merged);
+      }
+    }
 
     if (!matched) {
       return {
@@ -471,6 +516,10 @@ export default function App() {
     }
 
     const res = sendFriendRequest(currentUser, matched);
+    if (res.success && res.request && isFirebaseReady()) {
+      await firestoreSendFriendRequest(res.request);
+    }
+
     // Refresh outgoing requests & friends
     setOutgoingRequests(getOutgoingRequests(currentUser.id));
     setFriends(getStoredFriends(currentUser.id));
@@ -478,21 +527,36 @@ export default function App() {
   }, [currentUser]);
 
   // Accept Friend Request -> Establishes reciprocal two-way friendship
-  const handleAcceptRequest = useCallback((reqId: string) => {
+  const handleAcceptRequest = useCallback(async (reqId: string) => {
     if (!currentUser) return;
+    const req = friendRequests.find((r) => r.id === reqId) || getStoredRequests(currentUser.id).find((r) => r.id === reqId);
     const res = acceptFriendRequest(currentUser, reqId);
     if (res.success) {
+      if (req && isFirebaseReady()) {
+        const accounts = getStoredAccounts();
+        const requester = accounts.find((a) => a.id === req.fromUserId);
+        if (requester) {
+          await firestoreAcceptFriendRequest(req, requester, currentUser);
+          const myUpdated = getStoredFriends(currentUser.id);
+          const reqUpdated = getStoredFriends(requester.id);
+          await firestoreSaveUserFriends(currentUser.id, myUpdated);
+          await firestoreSaveUserFriends(requester.id, reqUpdated);
+        }
+      }
       setFriends(getStoredFriends(currentUser.id));
       setFriendRequests(getStoredRequests(currentUser.id));
       setOutgoingRequests(getOutgoingRequests(currentUser.id));
       setNudgeSuccessBanner(res.message);
       setTimeout(() => setNudgeSuccessBanner(null), 3500);
     }
-  }, [currentUser]);
+  }, [currentUser, friendRequests]);
 
   // Reject Request
-  const handleRejectRequest = useCallback((reqId: string) => {
+  const handleRejectRequest = useCallback(async (reqId: string) => {
     if (!currentUser) return;
+    if (isFirebaseReady()) {
+      await firestoreRejectFriendRequest(reqId);
+    }
     rejectFriendRequest(currentUser.id, reqId);
     setFriendRequests(getStoredRequests(currentUser.id));
   }, [currentUser]);

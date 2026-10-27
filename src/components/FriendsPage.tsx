@@ -33,7 +33,7 @@ interface FriendsPageProps {
   allAccounts: UserAccount[];
   currentTimeMs: number;
   onNudgeFriend: (friend: Friend) => void;
-  onSendFriendRequest: (identifier: string) => { success: boolean; message: string };
+  onSendFriendRequest: (identifier: string) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   onAcceptRequest: (reqId: string) => void;
   onRejectRequest: (reqId: string) => void;
   onRemoveFriend: (friendId: string) => void;
@@ -60,14 +60,14 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
   const [friendInput, setFriendInput] = useState('');
   const [addFeedback, setAddFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!friendInput.trim()) {
       setAddFeedback({ type: 'error', text: 'Masukkan kode atau username teman' });
       return;
     }
 
-    const res = onSendFriendRequest(friendInput.trim());
+    const res = await onSendFriendRequest(friendInput.trim());
     if (res.success) {
       setAddFeedback({ type: 'success', text: res.message });
       setFriendInput('');
@@ -79,8 +79,8 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
     }
   };
 
-  const handleQuickSend = (identifier: string) => {
-    const res = onSendFriendRequest(identifier);
+  const handleQuickSend = async (identifier: string) => {
+    const res = await onSendFriendRequest(identifier);
     if (res.success) {
       setAddFeedback({ type: 'success', text: res.message });
       setTimeout(() => {

@@ -238,6 +238,61 @@ export function firestoreSubscribeRequests(
   );
 }
 
+export function firestoreSubscribeOutgoingRequests(
+  userId: string,
+  onChange: (reqs: FriendRequest[]) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  const q = query(
+    collection(db, 'friendRequests'),
+    where('fromUserId', '==', userId),
+    where('status', '==', 'PENDING')
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs.map((d) => d.data() as FriendRequest);
+      onChange(list);
+    },
+    (err) => console.warn('Outgoing requests snapshot listener:', err)
+  );
+}
+
+export async function firestoreSaveUserFriends(userId: string, friends: Friend[]): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+
+  try {
+    await setDoc(doc(db, 'userFriends', userId), { friends }, { merge: true });
+  } catch (err) {
+    console.error('Firestore save userFriends error:', err);
+  }
+}
+
+export function firestoreSubscribeUserFriends(
+  userId: string,
+  onChange: (friends: Friend[]) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  return onSnapshot(
+    doc(db, 'userFriends', userId),
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data && Array.isArray(data.friends)) {
+          onChange(data.friends);
+        }
+      }
+    },
+    (err) => console.warn('UserFriends listener:', err)
+  );
+}
+
 export async function firestoreAcceptFriendRequest(
   request: FriendRequest,
   requesterUser: UserAccount,

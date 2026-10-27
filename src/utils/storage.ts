@@ -549,7 +549,7 @@ export function getOutgoingRequests(userId: string): FriendRequest[] {
 export function sendFriendRequest(
   fromUser: UserAccount,
   targetAccount: UserAccount
-): { success: boolean; message: string } {
+): { success: boolean; message: string; request?: FriendRequest } {
   if (fromUser.id === targetAccount.id) {
     return { success: false, message: 'Tidak dapat menambahkan diri sendiri sebagai teman.' };
   }
@@ -603,6 +603,7 @@ export function sendFriendRequest(
   return {
     success: true,
     message: `Permintaan pertemanan berhasil dikirim ke ${targetAccount.name}! Menunggu persetujuan.`,
+    request: newReq,
   };
 }
 
