@@ -38,6 +38,7 @@ import {
   saveStoredNudges,
   saveStoredSettings,
   sendFriendRequest,
+  deleteAccount,
 } from './utils/storage';
 import {
   playNudgeTone,
@@ -246,6 +247,18 @@ export default function App() {
     logoutUser();
     setCurrentUser(null);
   }, []);
+
+  const handleDeleteAccount = useCallback(async (password: string): Promise<{ success: boolean; message: string }> => {
+    if (!currentUser) return { success: false, message: 'Tidak ada akun aktif' };
+    const res = await deleteAccount(currentUser.id, password);
+    if (res.success) {
+      stopWaterSound();
+      isRingingRef.current = false;
+      setCurrentUser(null);
+      setAllAccounts(getStoredAccounts());
+    }
+    return res;
+  }, [currentUser]);
 
   // Live timer tick every 1000ms
   useEffect(() => {
@@ -779,6 +792,7 @@ export default function App() {
             onResetToDemoScenario={handleResetToDemoScenario}
             onLogout={handleLogout}
             onOpenCloudSync={() => setIsCloudSyncOpen(true)}
+            onDeleteAccount={handleDeleteAccount}
           />
         )}
       </main>

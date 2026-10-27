@@ -15,6 +15,10 @@ import {
   LogOut,
   Cloud,
   Database,
+  Trash2,
+  Eye,
+  EyeOff,
+  AlertTriangle,
 } from 'lucide-react';
 import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
@@ -27,6 +31,7 @@ interface SettingsPageProps {
   onResetToDemoScenario: () => void;
   onLogout: () => void;
   onOpenCloudSync: () => void;
+  onDeleteAccount: (password: string) => Promise<{ success: boolean; message: string }>;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
@@ -36,6 +41,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onResetToDemoScenario,
   onLogout,
   onOpenCloudSync,
+  onDeleteAccount,
 }) => {
   const [name, setName] = useState(settings.name);
   const [intervalMinutes, setIntervalMinutes] = useState(settings.intervalMinutes);
@@ -49,6 +55,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Delete Account Confirmation State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleConfirmDelete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deletePassword.trim()) {
+      setDeleteError('Masukkan password untuk konfirmasi');
+      return;
+    }
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await onDeleteAccount(deletePassword);
+      if (!res.success) {
+        setDeleteError(res.message);
+        setIsDeleting(false);
+      }
+    } catch {
+      setDeleteError('Terjadi kesalahan saat menghapus akun.');
+      setIsDeleting(false);
+    }
+  };
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(settings.userCode);
@@ -488,6 +521,102 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Danger Zone: Delete Account */}
+      <div className="bg-rose-50/60 rounded-3xl p-6 border border-rose-200/80 shadow-xs space-y-3">
+        <div className="flex items-center gap-2 border-b border-rose-200/60 pb-3">
+          <Trash2 className="w-4 h-4 text-rose-600" />
+          <h2 className="text-sm font-bold text-rose-900">Zona Berbahaya</h2>
+        </div>
+        <p className="text-xs text-rose-700 leading-relaxed">
+          Menghapus akun akan menghapus profil, riwayat minum, dan seluruh koneksi pertemanan akun <strong>@{currentUser.username}</strong> secara permanen dari perangkat dan database cloud.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setDeletePassword('');
+            setDeleteError(null);
+            setIsDeleteModalOpen(true);
+          }}
+          className="py-2.5 px-4 rounded-xl bg-white hover:bg-rose-50 border border-rose-300 text-rose-700 text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          <span>Hapus Akun @{currentUser.username}</span>
+        </button>
+      </div>
+
+      {/* Delete Account Password Confirmation Modal */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-rose-100 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Konfirmasi Hapus Akun</h3>
+                <p className="text-xs text-slate-500">Tindakan ini permanen dan tidak dapat dibatalkan</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-rose-50 rounded-2xl border border-rose-100 text-xs text-rose-700 leading-relaxed">
+              Kamu akan menghapus akun <strong>@{currentUser.username}</strong> beserta seluruh status hidrasi dan permintaan pertemanan dari database cloud dan lokal.
+            </div>
+
+            <form onSubmit={handleConfirmDelete} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Masukkan Password Akunmu
+                </label>
+                <div className="relative">
+                  <input
+                    type={showDeletePassword ? 'text' : 'password'}
+                    required
+                    autoFocus
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    placeholder="Ketik password untuk konfirmasi"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:border-rose-500 focus:bg-white pr-10 text-slate-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowDeletePassword(!showDeletePassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {showDeletePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {deleteError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                  <span>{deleteError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setIsDeleteModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isDeleting || !deletePassword}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isDeleting ? 'Menghapus...' : 'Ya, Hapus Akun Permanen'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

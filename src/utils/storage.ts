@@ -12,6 +12,7 @@ import {
   firestoreFindAccountByUsername,
   firestoreGetAllAccounts,
   firestoreRegisterAccount,
+  firestoreDeleteAccount,
   isFirebaseReady,
 } from './firebase';
 
@@ -322,6 +323,61 @@ export async function loginAccount(
 
 export function logoutUser(): void {
   setActiveSessionUserId(null);
+}
+
+export async function deleteAccount(
+  userId: string,
+  passwordConfirm: string
+): Promise<{ success: boolean; message: string }> {
+  const accounts = getStoredAccounts();
+  const account = accounts.find((a) => a.id === userId);
+
+  if (!account) {
+    return { success: false, message: 'Akun tidak ditemukan.' };
+  }
+
+  if (account.password !== passwordConfirm.trim()) {
+    return { success: false, message: 'Password salah. Konfirmasi penghapusan gagal.' };
+  }
+
+  // 1. Remove from all friends' lists (mutual cleanup)
+  const myFriends = getStoredFriends(userId);
+  for (const f of myFriends) {
+    removeMutualFriendship(userId, f.id);
+  }
+
+  // 2. Remove all personal keys from localStorage
+  try {
+    localStorage.removeItem(`aiya_settings_${userId}`);
+    localStorage.removeItem(`aiya_status_${userId}`);
+    localStorage.removeItem(`aiya_friends_${userId}`);
+    localStorage.removeItem(`aiya_requests_${userId}`);
+    localStorage.removeItem(`aiya_logs_${userId}`);
+    localStorage.removeItem(`aiya_nudges_${userId}`);
+  } catch {
+    // ignore
+  }
+
+  // 3. Remove from accounts list
+  const remainingAccounts = accounts.filter((a) => a.id !== userId);
+  saveStoredAccounts(remainingAccounts);
+
+  // 4. Delete from Firestore if connected
+  if (isFirebaseReady()) {
+    try {
+      await firestoreDeleteAccount(userId);
+    } catch (err) {
+      console.warn('Firestore delete account notice:', err);
+    }
+  }
+
+  // 5. Clear active session
+  logoutUser();
+
+  return {
+    success: true,
+    message: `Akun @${account.username} berhasil dihapus permanen.`,
+  };
 }
 
 // ----------------- PER-USER DATA STORAGE -----------------

@@ -132,6 +132,32 @@ export async function firestoreRegisterAccount(
   }
 }
 
+// Cloud Account: Delete Account & related documents
+export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    await deleteDoc(doc(db, 'accounts', userId));
+    await deleteDoc(doc(db, 'settings', userId));
+    await deleteDoc(doc(db, 'statuses', userId));
+    await deleteDoc(doc(db, 'userFriends', userId));
+
+    // Delete friend requests where user was sender or recipient
+    const reqsSnap = await getDocs(collection(db, 'friendRequests'));
+    for (const d of reqsSnap.docs) {
+      const data = d.data();
+      if (data.fromUserId === userId || data.toUserId === userId) {
+        await deleteDoc(doc(db, 'friendRequests', d.id));
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error('Firestore delete account error:', err);
+    return false;
+  }
+}
+
 // Cloud Account: Find By Username
 export async function firestoreFindAccountByUsername(
   username: string
