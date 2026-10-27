@@ -134,21 +134,36 @@ export default function App() {
         const local = getStoredAccounts();
         const mergedMap = new Map<string, UserAccount>();
         local.forEach((a) => mergedMap.set(a.id, a));
-        cloudAccounts.forEach((a) => mergedMap.set(a.id, a));
+        cloudAccounts.forEach((a) => {
+          // If there was an old local dummy account with same username, deduplicate
+          for (const [k, v] of mergedMap.entries()) {
+            if (v.username.toLowerCase() === a.username.toLowerCase() && v.id !== a.id) {
+              mergedMap.delete(k);
+            }
+          }
+          mergedMap.set(a.id, a);
+        });
         const merged = Array.from(mergedMap.values());
         saveStoredAccounts(merged);
         setAllAccounts(merged);
+
+        // Align currentUser with official cloud ID if needed
+        const cloudMe = cloudAccounts.find(a => a.username.toLowerCase() === currentUser.username.toLowerCase());
+        if (cloudMe && cloudMe.id !== currentUser.id) {
+          setCurrentUser(cloudMe);
+          setActiveSessionUserId(cloudMe.id);
+        }
       }
     }).catch(() => {});
 
     // 3. Listen to incoming friend requests in real-time
-    const unsubRequests = firestoreSubscribeRequests(currentUser.id, (cloudReqs) => {
+    const unsubRequests = firestoreSubscribeRequests(currentUser, (cloudReqs) => {
       setFriendRequests(cloudReqs);
       saveStoredRequests(cloudReqs, currentUser.id);
     });
 
     // 4. Listen to outgoing friend requests in real-time
-    const unsubOutgoing = firestoreSubscribeOutgoingRequests(currentUser.id, (cloudOut) => {
+    const unsubOutgoing = firestoreSubscribeOutgoingRequests(currentUser, (cloudOut) => {
       setOutgoingRequests(cloudOut);
     });
 
@@ -159,7 +174,7 @@ export default function App() {
     });
 
     // 6. Listen to incoming nudges from cloud
-    const unsubNudges = firestoreSubscribeNudges(currentUser.id, (cloudNudge) => {
+    const unsubNudges = firestoreSubscribeNudges(currentUser, (cloudNudge) => {
       setActiveNudge(cloudNudge);
       playNudgeTone();
     });

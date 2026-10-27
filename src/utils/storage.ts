@@ -590,10 +590,12 @@ export function sendFriendRequest(
   const newReq: FriendRequest = {
     id: `req-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     fromUserId: fromUser.id,
+    fromUsername: fromUser.username.toLowerCase(),
     fromName: fromUser.name,
     fromCode: fromUser.userCode,
     fromAvatar: fromUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${fromUser.username}`,
     toUserId: targetAccount.id,
+    toUsername: targetAccount.username.toLowerCase(),
     status: 'PENDING',
     timestamp: new Date().toISOString(),
   };

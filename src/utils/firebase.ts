@@ -216,22 +216,30 @@ export async function firestoreSendFriendRequest(request: FriendRequest): Promis
 }
 
 export function firestoreSubscribeRequests(
-  userId: string,
+  user: { id: string; username?: string } | string,
   onChange: (reqs: FriendRequest[]) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
+  const targetId = typeof user === 'string' ? user : user.id;
+  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
+
   const q = query(
     collection(db, 'friendRequests'),
-    where('toUserId', '==', userId),
     where('status', '==', 'PENDING')
   );
 
   return onSnapshot(
     q,
     (snap) => {
-      const list = snap.docs.map((d) => d.data() as FriendRequest);
+      const list = snap.docs
+        .map((d) => d.data() as FriendRequest)
+        .filter(
+          (r) =>
+            r.toUserId === targetId ||
+            (targetUsername && r.toUsername && r.toUsername.toLowerCase().trim() === targetUsername)
+        );
       onChange(list);
     },
     (err) => console.warn('Requests snapshot listener:', err)
@@ -239,22 +247,30 @@ export function firestoreSubscribeRequests(
 }
 
 export function firestoreSubscribeOutgoingRequests(
-  userId: string,
+  user: { id: string; username?: string } | string,
   onChange: (reqs: FriendRequest[]) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
+  const targetId = typeof user === 'string' ? user : user.id;
+  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
+
   const q = query(
     collection(db, 'friendRequests'),
-    where('fromUserId', '==', userId),
     where('status', '==', 'PENDING')
   );
 
   return onSnapshot(
     q,
     (snap) => {
-      const list = snap.docs.map((d) => d.data() as FriendRequest);
+      const list = snap.docs
+        .map((d) => d.data() as FriendRequest)
+        .filter(
+          (r) =>
+            r.fromUserId === targetId ||
+            (targetUsername && r.fromUsername && r.fromUsername.toLowerCase().trim() === targetUsername)
+        );
       onChange(list);
     },
     (err) => console.warn('Outgoing requests snapshot listener:', err)
@@ -342,15 +358,17 @@ export async function firestoreSendNudge(nudge: NudgeEvent): Promise<void> {
 }
 
 export function firestoreSubscribeNudges(
-  userId: string,
+  user: { id: string; username?: string } | string,
   onNudge: (nudge: NudgeEvent) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
+  const targetId = typeof user === 'string' ? user : user.id;
+  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
+
   const q = query(
     collection(db, 'nudges'),
-    where('toUserId', '==', userId),
     where('isRead', '==', false)
   );
 
@@ -359,7 +377,13 @@ export function firestoreSubscribeNudges(
     (snap) => {
       snap.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          onNudge(change.doc.data() as NudgeEvent);
+          const nudge = change.doc.data() as NudgeEvent;
+          if (
+            nudge.toUserId === targetId ||
+            (targetUsername && nudge.toUsername && nudge.toUsername.toLowerCase().trim() === targetUsername)
+          ) {
+            onNudge(nudge);
+          }
         }
       });
     },

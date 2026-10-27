@@ -58,10 +58,12 @@ export interface Friend {
 export interface FriendRequest {
   id: string;
   fromUserId: string;
+  fromUsername?: string;
   fromName: string;
   fromCode: string;
   fromAvatar: string;
   toUserId: string;
+  toUsername?: string;
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
   timestamp: string;
 }
@@ -69,8 +71,10 @@ export interface FriendRequest {
 export interface NudgeEvent {
   id: string;
   fromUserId: string;
+  fromUsername?: string;
   fromName: string;
   toUserId: string;
+  toUsername?: string;
   timestamp: string;
   message: string;
   isRead: boolean;
