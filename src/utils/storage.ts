@@ -505,25 +505,28 @@ export function getStoredFriends(targetUserId?: string): Friend[] {
   }
 
   // TWO-WAY MUTUAL VERIFICATION (Section 10.4 of PDF):
-  // A friendship is only valid if target friend also has this user in their friends list!
-  // Any unreciprocal/hardcoded entries (like previous starter friends) are automatically filtered out.
-  const mutualList = list.filter((f) => {
-    try {
-      const otherRaw = localStorage.getItem(`aiya_friends_${f.id}`);
-      if (!otherRaw) return false;
-      const otherFriends: Friend[] = JSON.parse(otherRaw);
-      return Array.isArray(otherFriends) && otherFriends.some((of) => of.id === uid);
-    } catch {
-      return false;
-    }
-  });
+  // When running strictly offline without Firebase, verify against other local account.
+  // When connected to Cloud Firebase, mutual friendship is already verified and synced from cloud.
+  let mutualList = list;
+  if (!isFirebaseReady()) {
+    mutualList = list.filter((f) => {
+      try {
+        const otherRaw = localStorage.getItem(`aiya_friends_${f.id}`);
+        if (!otherRaw) return false;
+        const otherFriends: Friend[] = JSON.parse(otherRaw);
+        return Array.isArray(otherFriends) && otherFriends.some((of) => of.id === uid);
+      } catch {
+        return false;
+      }
+    });
 
-  // Permanently clean unreciprocal entries from localStorage if found
-  if (mutualList.length !== list.length) {
-    try {
-      localStorage.setItem(`aiya_friends_${uid}`, JSON.stringify(mutualList));
-    } catch {
-      // ignore
+    // Permanently clean unreciprocal entries from localStorage if found in offline mode
+    if (mutualList.length !== list.length) {
+      try {
+        localStorage.setItem(`aiya_friends_${uid}`, JSON.stringify(mutualList));
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -534,14 +537,22 @@ export function getStoredFriends(targetUserId?: string): Friend[] {
       (a) => a.id === f.id || a.userCode.toUpperCase() === f.userCode.toUpperCase()
     );
     if (matchedAccount) {
-      const realStatus = getStoredDrinkStatus(matchedAccount.id);
+      if (!isFirebaseReady()) {
+        const realStatus = getStoredDrinkStatus(matchedAccount.id);
+        return {
+          ...f,
+          name: matchedAccount.name,
+          userCode: matchedAccount.userCode,
+          avatar: matchedAccount.avatar || f.avatar,
+          dueAt: realStatus.dueAt,
+          lastDrinkAt: realStatus.lastDrinkAt,
+        };
+      }
       return {
         ...f,
         name: matchedAccount.name,
         userCode: matchedAccount.userCode,
         avatar: matchedAccount.avatar || f.avatar,
-        dueAt: realStatus.dueAt,
-        lastDrinkAt: realStatus.lastDrinkAt,
       };
     }
     return f;
