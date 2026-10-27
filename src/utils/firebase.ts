@@ -151,6 +151,14 @@ export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
         await deleteDoc(doc(db, 'friendRequests', d.id));
       }
     }
+    // Delete nudges where user was sender or recipient
+    const nudgesSnap = await getDocs(collection(db, 'nudges'));
+    for (const d of nudgesSnap.docs) {
+      const data = d.data();
+      if (data.fromUserId === userId || data.toUserId === userId) {
+        await deleteDoc(doc(db, 'nudges', d.id));
+      }
+    }
     return true;
   } catch (err) {
     console.error('Firestore delete account error:', err);
@@ -406,6 +414,17 @@ export async function firestoreSendNudge(nudge: NudgeEvent): Promise<void> {
   }
 }
 
+export async function firestoreMarkNudgeAsRead(nudgeId: string): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+
+  try {
+    await setDoc(doc(db, 'nudges', nudgeId), { isRead: true }, { merge: true });
+  } catch (err) {
+    console.error('Firestore mark nudge read error:', err);
+  }
+}
+
 export function firestoreSubscribeNudges(
   user: { id: string; username?: string } | string,
   onNudge: (nudge: NudgeEvent) => void
@@ -424,6 +443,7 @@ export function firestoreSubscribeNudges(
   return onSnapshot(
     q,
     (snap) => {
+      const incoming: NudgeEvent[] = [];
       snap.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const nudge = change.doc.data() as NudgeEvent;
@@ -431,10 +451,23 @@ export function firestoreSubscribeNudges(
             nudge.toUserId === targetId ||
             (targetUsername && nudge.toUsername && nudge.toUsername.toLowerCase().trim() === targetUsername)
           ) {
-            onNudge(nudge);
+            incoming.push(nudge);
           }
         }
       });
+
+      if (incoming.length > 0) {
+        // Sort descending by timestamp, take the latest to show
+        incoming.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        const latestNudge = incoming[0];
+        onNudge(latestNudge);
+
+        // Immediately mark all matching unread nudges as read in Firestore
+        // so they only appear ONCE and do not repeat every time the page refreshes
+        incoming.forEach((n) => {
+          firestoreMarkNudgeAsRead(n.id).catch(console.error);
+        });
+      }
     },
     (err) => console.warn('Nudges snapshot listener:', err)
   );

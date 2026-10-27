@@ -30,6 +30,7 @@ import {
   getStoredRequests,
   getStoredSettings,
   logoutUser,
+  markStoredNudgeAsRead,
   NUDGE_COOLDOWN_MS,
   rejectFriendRequest,
   removeMutualFriendship,
@@ -68,6 +69,7 @@ import {
   firestoreAcceptFriendRequest,
   firestoreRejectFriendRequest,
   firestoreSendNudge,
+  firestoreMarkNudgeAsRead,
   firestoreSubscribeNudges,
   firestoreRegisterAccount,
   firestoreGetAllAccounts,
@@ -196,6 +198,9 @@ export default function App() {
     const unsubNudges = firestoreSubscribeNudges(currentUser, (cloudNudge) => {
       setActiveNudge(cloudNudge);
       playNudgeTone();
+      if (currentUser) {
+        markStoredNudgeAsRead(cloudNudge.id, currentUser.id);
+      }
     });
 
     return () => {
@@ -334,6 +339,9 @@ export default function App() {
       );
       setNudges(updated);
       saveStoredNudges(updated, currentUser.id);
+      if (isFirebaseReady()) {
+        firestoreMarkNudgeAsRead(unread.id).catch(console.error);
+      }
     }
   }, [currentUser, currentTimeMs]);
 
@@ -391,9 +399,25 @@ export default function App() {
     }
   }, [currentUser, currentTimeMs, drinkStatus, settings, isSoundMuted]);
 
+  // Dismiss friend nudge and ensure marked read locally & in Firestore
+  const handleDismissNudge = useCallback(() => {
+    setActiveNudge((curr) => {
+      if (curr) {
+        if (currentUser) {
+          markStoredNudgeAsRead(curr.id, currentUser.id);
+        }
+        if (isFirebaseReady()) {
+          firestoreMarkNudgeAsRead(curr.id).catch(console.error);
+        }
+      }
+      return null;
+    });
+  }, [currentUser]);
+
   // Handler: "Sudah" (Section 17.1 of PDF)
   const handleAnswerSudah = useCallback(() => {
     if (!currentUser) return;
+    handleDismissNudge();
     stopWaterSound();
     isRingingRef.current = false;
     playSuccessChime();
@@ -424,11 +448,12 @@ export default function App() {
     // Copy from Section 22.5
     const feedback = `Bagus! Pengingat berikutnya jam ${formatTimeHM(nextTimeIso)}.`;
     setLastFeedbackMessage(feedback);
-  }, [currentTimeMs, currentUser, settings]);
+  }, [currentTimeMs, currentUser, settings, handleDismissNudge]);
 
   // Handler: "Belum" (Section 17.2 of PDF)
   const handleAnswerBelum = useCallback(() => {
     if (!currentUser) return;
+    handleDismissNudge();
     stopWaterSound();
     isRingingRef.current = false;
 
@@ -456,11 +481,12 @@ export default function App() {
     // Copy from Section 22.5
     const feedback = `Oke, Aiya ingatkan lagi ${settings.snoozeMinutes} menit lagi.`;
     setLastFeedbackMessage(feedback);
-  }, [currentTimeMs, currentUser, drinkStatus, settings]);
+  }, [currentTimeMs, currentUser, drinkStatus, settings, handleDismissNudge]);
 
   // Handler: Drink Now (outside scheduled alarm - Section 9.2 & 13)
   const handleDrinkNowOutsideAlarm = useCallback(() => {
     if (!currentUser) return;
+    handleDismissNudge();
     stopWaterSound();
     isRingingRef.current = false;
     playSuccessChime();
@@ -488,7 +514,7 @@ export default function App() {
     setLogs((prev) => [newLog, ...prev]);
 
     setLastFeedbackMessage(`Minum tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
-  }, [currentTimeMs, currentUser, settings]);
+  }, [currentTimeMs, currentUser, settings, handleDismissNudge]);
 
   // Trigger test alarm immediately
   const handleTriggerAlarmNow = useCallback(() => {
@@ -878,10 +904,10 @@ export default function App() {
       <NudgeToast
         nudge={activeNudge}
         onOpenConfirm={() => {
-          setActiveNudge(null);
+          handleDismissNudge();
           handleTriggerAlarmNow();
         }}
-        onDismiss={() => setActiveNudge(null)}
+        onDismiss={handleDismissNudge}
       />
 
       {/* Onboarding Dialog if not completed */}

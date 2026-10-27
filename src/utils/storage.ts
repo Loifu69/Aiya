@@ -794,6 +794,17 @@ export function saveStoredNudges(nudges: NudgeEvent[], targetUserId?: string): v
   }
 }
 
+export function markStoredNudgeAsRead(nudgeId: string, targetUserId?: string): void {
+  const uid = targetUserId || getActiveSessionUserId() || 'user-001';
+  try {
+    const list = getStoredNudges(uid);
+    const updated = list.map((n) => (n.id === nudgeId ? { ...n, isRead: true } : n));
+    saveStoredNudges(updated, uid);
+  } catch {
+    // ignore
+  }
+}
+
 // Deliver nudge to target user's nudge inbox
 export function deliverNudgeToUser(
   fromUser: { id: string; name: string; username?: string },
