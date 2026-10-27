@@ -57,6 +57,18 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { NudgeToast } from './components/NudgeToast';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DocumentScenarioModal } from './components/DocumentScenarioModal';
+import { CloudSyncModal } from './components/CloudSyncModal';
+import {
+  firestoreSaveDrinkStatus,
+  firestoreSubscribeDrinkStatus,
+  firestoreSendFriendRequest,
+  firestoreSubscribeRequests,
+  firestoreAcceptFriendRequest,
+  firestoreRejectFriendRequest,
+  firestoreSendNudge,
+  firestoreSubscribeNudges,
+  isFirebaseReady,
+} from './utils/firebase';
 
 export default function App() {
   // Authentication state
@@ -98,9 +110,31 @@ export default function App() {
   // PWA Install Prompt State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstalledPwa, setIsInstalledPwa] = useState(false);
+  const [isCloudSyncOpen, setIsCloudSyncOpen] = useState(false);
 
   // Track if sound is currently ringing for reminder
   const isRingingRef = useRef(false);
+
+  // Firestore Realtime Listeners for Cross-Device Synchronization
+  useEffect(() => {
+    if (!currentUser || !isFirebaseReady()) return;
+
+    // Listen to incoming requests from cloud
+    const unsubRequests = firestoreSubscribeRequests(currentUser.id, (cloudReqs) => {
+      setFriendRequests(cloudReqs);
+    });
+
+    // Listen to incoming nudges from cloud
+    const unsubNudges = firestoreSubscribeNudges(currentUser.id, (cloudNudge) => {
+      setActiveNudge(cloudNudge);
+      playNudgeTone();
+    });
+
+    return () => {
+      if (unsubRequests) unsubRequests();
+      if (unsubNudges) unsubNudges();
+    };
+  }, [currentUser]);
 
   // Detect PWA installability
   useEffect(() => {
@@ -573,7 +607,21 @@ export default function App() {
 
   // If user is not authenticated, display the Register/Login page!
   if (!currentUser) {
-    return <AuthPage onAuthSuccess={handleAuthSuccess} />;
+    return (
+      <>
+        <AuthPage
+          onAuthSuccess={handleAuthSuccess}
+          onOpenCloudSync={() => setIsCloudSyncOpen(true)}
+        />
+        <CloudSyncModal
+          isOpen={isCloudSyncOpen}
+          onClose={() => setIsCloudSyncOpen(false)}
+          onConfigUpdated={() => {
+            setAllAccounts(getStoredAccounts());
+          }}
+        />
+      </>
+    );
   }
 
   return (
@@ -647,6 +695,7 @@ export default function App() {
             onUpdateSettings={handleUpdateSettings}
             onResetToDemoScenario={handleResetToDemoScenario}
             onLogout={handleLogout}
+            onOpenCloudSync={() => setIsCloudSyncOpen(true)}
           />
         )}
       </main>
@@ -682,6 +731,15 @@ export default function App() {
         isOpen={isScenarioModalOpen}
         onClose={() => setIsScenarioModalOpen(false)}
         onApplyScenarioB={handleApplyScenarioB}
+      />
+
+      {/* Cloud Database Sync Modal (Firebase Firestore) */}
+      <CloudSyncModal
+        isOpen={isCloudSyncOpen}
+        onClose={() => setIsCloudSyncOpen(false)}
+        onConfigUpdated={() => {
+          setAllAccounts(getStoredAccounts());
+        }}
       />
     </div>
   );

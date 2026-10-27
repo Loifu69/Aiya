@@ -8,6 +8,12 @@ import {
   UserAccount,
   UserSettings,
 } from '../types';
+import {
+  firestoreFindAccountByUsername,
+  firestoreGetAllAccounts,
+  firestoreRegisterAccount,
+  isFirebaseReady,
+} from './firebase';
 
 const STORAGE_KEYS = {
   ACCOUNTS: 'aiya_accounts_db_v2',
@@ -162,10 +168,10 @@ export function getActiveUser(): UserAccount | null {
   return accounts.find((acc) => acc.id === activeId) || null;
 }
 
-export function registerAccount(
+export async function registerAccount(
   usernameRaw: string,
   passwordRaw: string
-): { success: boolean; message: string; user?: UserAccount } {
+): Promise<{ success: boolean; message: string; user?: UserAccount }> {
   const username = usernameRaw.trim().toLowerCase();
   const password = passwordRaw.trim();
 
@@ -189,6 +195,18 @@ export function registerAccount(
   const existing = accounts.find((a) => a.username.toLowerCase() === username);
   if (existing) {
     return { success: false, message: `Username "${username}" sudah digunakan, silakan pilih yang lain.` };
+  }
+
+  // Also check cloud Firestore if connected
+  if (isFirebaseReady()) {
+    try {
+      const cloudExisting = await firestoreFindAccountByUsername(username);
+      if (cloudExisting) {
+        return { success: false, message: `Username "${username}" sudah digunakan di database cloud.` };
+      }
+    } catch {
+      // ignore
+    }
   }
 
   const userId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -240,6 +258,15 @@ export function registerAccount(
   saveStoredFriends([], userId);
   saveStoredRequests([], userId);
 
+  // Sync to Cloud Firestore if connected!
+  if (isFirebaseReady()) {
+    try {
+      await firestoreRegisterAccount(newAccount, newSettings, initialStatus);
+    } catch (err) {
+      console.warn('Firestore register sync warning:', err);
+    }
+  }
+
   // Set active session
   setActiveSessionUserId(userId);
 
@@ -250,10 +277,10 @@ export function registerAccount(
   };
 }
 
-export function loginAccount(
+export async function loginAccount(
   usernameRaw: string,
   passwordRaw: string
-): { success: boolean; message: string; user?: UserAccount } {
+): Promise<{ success: boolean; message: string; user?: UserAccount }> {
   const username = usernameRaw.trim().toLowerCase();
   const password = passwordRaw.trim();
 
@@ -261,10 +288,25 @@ export function loginAccount(
     return { success: false, message: 'Masukkan username dan password.' };
   }
 
+  // 1. Check local cache
   const accounts = getStoredAccounts();
-  const user = accounts.find(
+  let user = accounts.find(
     (a) => a.username.toLowerCase() === username && a.password === password
   );
+
+  // 2. If not found in local cache and Firebase is connected, check cloud Firestore!
+  if (!user && isFirebaseReady()) {
+    try {
+      const cloudUser = await firestoreFindAccountByUsername(username);
+      if (cloudUser && cloudUser.password === password) {
+        user = cloudUser;
+        // Merge into local accounts cache
+        saveStoredAccounts([...accounts.filter((a) => a.id !== cloudUser.id), cloudUser]);
+      }
+    } catch (err) {
+      console.warn('Firestore login check warning:', err);
+    }
+  }
 
   if (!user) {
     return { success: false, message: 'Username atau password salah.' };

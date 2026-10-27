@@ -13,9 +13,12 @@ import {
   AlertCircle,
   Save,
   LogOut,
+  Cloud,
+  Database,
 } from 'lucide-react';
 import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
+import { isFirebaseReady } from '../utils/firebase';
 
 interface SettingsPageProps {
   currentUser: UserAccount;
@@ -23,6 +26,7 @@ interface SettingsPageProps {
   onUpdateSettings: (newSettings: Partial<UserSettings>) => { success: boolean; message?: string };
   onResetToDemoScenario: () => void;
   onLogout: () => void;
+  onOpenCloudSync: () => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
@@ -31,6 +35,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onUpdateSettings,
   onResetToDemoScenario,
   onLogout,
+  onOpenCloudSync,
 }) => {
   const [name, setName] = useState(settings.name);
   const [intervalMinutes, setIntervalMinutes] = useState(settings.intervalMinutes);
@@ -200,6 +205,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <span>Keluar Akun</span>
             </button>
           </div>
+        </div>
+
+        {/* Section: Cloud Database & Device Sync */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-sky-600" />
+              <h2 className="text-sm font-bold text-slate-900">Database &amp; Sinkronisasi Online</h2>
+            </div>
+            {isFirebaseReady() ? (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
+                ✓ Cloud Aktif
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold">
+                Lokal Saja
+              </span>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Hubungkan ke Firebase Firestore agar akun, status hidrasi, dan daftar temanmu tersinkronisasi otomatis di HP, laptop, dan perangkat temanmu.
+          </p>
+
+          <button
+            type="button"
+            onClick={onOpenCloudSync}
+            className="w-full py-2.5 px-3 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>{isFirebaseReady() ? 'Kelola Database Cloud' : 'Hubungkan ke Firebase Firestore'}</span>
+          </button>
         </div>
 
         {/* Section: Interval & Snooze (Core Spec Section 5.1 & 22.2) */}

@@ -10,15 +10,18 @@ import {
   AlertCircle,
   CheckCircle2,
   Users,
+  Cloud,
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { loginAccount, registerAccount, SEED_ACCOUNTS } from '../utils/storage';
+import { isFirebaseReady } from '../utils/firebase';
 
 interface AuthPageProps {
   onAuthSuccess: (account: UserAccount) => void;
+  onOpenCloudSync?: () => void;
 }
 
-export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
+export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSync }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -27,15 +30,26 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
       if (mode === 'login') {
-        const res = loginAccount(username, password);
+        const res = await loginAccount(username, password);
+        if (res.success && res.user) {
+          setSuccessMsg(res.message);
+          setTimeout(() => {
+            onAuthSuccess(res.user!);
+          }, 300);
+        } else {
+          setErrorMsg(res.message);
+          setIsLoading(false);
+        }
+      } else {
+        const res = await registerAccount(username, password);
         if (res.success && res.user) {
           setSuccessMsg(res.message);
           setTimeout(() => {
@@ -45,27 +59,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
           setErrorMsg(res.message);
           setIsLoading(false);
         }
-      } else {
-        const res = registerAccount(username, password);
-        if (res.success && res.user) {
-          setSuccessMsg(res.message);
-          setTimeout(() => {
-            onAuthSuccess(res.user!);
-          }, 600);
-        } else {
-          setErrorMsg(res.message);
-          setIsLoading(false);
-        }
       }
-    }, 200);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Terjadi kesalahan sistem.');
+      setIsLoading(false);
+    }
   };
 
-  const handleQuickDemoLogin = (seedUser: UserAccount) => {
+  const handleQuickDemoLogin = async (seedUser: UserAccount) => {
     setUsername(seedUser.username);
     setPassword(seedUser.password);
     setErrorMsg(null);
     setSuccessMsg(null);
-    const res = loginAccount(seedUser.username, seedUser.password);
+    const res = await loginAccount(seedUser.username, seedUser.password);
     if (res.success && res.user) {
       setSuccessMsg(`Masuk sebagai ${res.user.name}...`);
       setTimeout(() => {
@@ -256,6 +262,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
                 </button>
               ))}
             </div>
+
+            {onOpenCloudSync && (
+              <button
+                type="button"
+                onClick={onOpenCloudSync}
+                className="mt-3.5 pt-3 border-t border-slate-100 text-[11px] text-sky-600 hover:text-sky-800 font-semibold flex items-center justify-center gap-1.5 w-full cursor-pointer transition-colors"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                <span>{isFirebaseReady() ? '✓ Database Cloud Terhubung' : 'Hubungkan ke Database Online (Firebase)'}</span>
+              </button>
+            )}
           </div>
         </div>
 
