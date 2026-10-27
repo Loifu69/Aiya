@@ -268,9 +268,9 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Periodically refresh friend status, requests, and nudges
+  // Periodically refresh friend status, requests, and nudges (only when offline/no Firebase)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || isFirebaseReady()) return;
     const interval = setInterval(() => {
       setFriends(getStoredFriends(currentUser.id));
       setFriendRequests(getStoredRequests(currentUser.id));
@@ -558,21 +558,45 @@ export default function App() {
   const handleAcceptRequest = useCallback(async (reqId: string) => {
     if (!currentUser) return;
     const req = friendRequests.find((r) => r.id === reqId) || getStoredRequests(currentUser.id).find((r) => r.id === reqId);
-    const res = acceptFriendRequest(currentUser, reqId);
+    if (!req) return;
+
+    let accounts = getStoredAccounts();
+    let requester = accounts.find(
+      (a) =>
+        a.id === req.fromUserId ||
+        (req.fromUsername && a.username.toLowerCase() === req.fromUsername.toLowerCase())
+    );
+
+    if (!requester && isFirebaseReady()) {
+      const cloudAccounts = await firestoreGetAllAccounts();
+      requester = cloudAccounts.find(
+        (a) =>
+          a.id === req.fromUserId ||
+          (req.fromUsername && a.username.toLowerCase() === req.fromUsername.toLowerCase())
+      );
+      if (requester) {
+        accounts = [...accounts.filter((a) => a.id !== requester!.id), requester];
+        saveStoredAccounts(accounts);
+        setAllAccounts(accounts);
+      }
+    }
+
+    if (!requester) {
+      alert('Akun pengirim tidak ditemukan.');
+      return;
+    }
+
+    const res = acceptFriendRequest(currentUser, reqId, req, requester);
     if (res.success) {
-      if (req && isFirebaseReady()) {
-        const accounts = getStoredAccounts();
-        const requester = accounts.find((a) => a.id === req.fromUserId);
-        if (requester) {
-          await firestoreAcceptFriendRequest(req, requester, currentUser);
-          const myUpdated = getStoredFriends(currentUser.id);
-          const reqUpdated = getStoredFriends(requester.id);
-          await firestoreSaveUserFriends(currentUser.id, myUpdated);
-          await firestoreSaveUserFriends(requester.id, reqUpdated);
-        }
+      if (isFirebaseReady()) {
+        await firestoreAcceptFriendRequest(req, requester, currentUser);
+        const myUpdated = getStoredFriends(currentUser.id);
+        const reqUpdated = getStoredFriends(requester.id);
+        await firestoreSaveUserFriends(currentUser.id, myUpdated);
+        await firestoreSaveUserFriends(requester.id, reqUpdated);
       }
       setFriends(getStoredFriends(currentUser.id));
-      setFriendRequests(getStoredRequests(currentUser.id));
+      setFriendRequests((prev) => prev.filter((r) => r.id !== reqId));
       setOutgoingRequests(getOutgoingRequests(currentUser.id));
       setNudgeSuccessBanner(res.message);
       setTimeout(() => setNudgeSuccessBanner(null), 3500);

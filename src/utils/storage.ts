@@ -668,19 +668,25 @@ export function sendFriendRequest(
 // Accept friend request -> establishes TWO-WAY reciprocal friendship!
 export function acceptFriendRequest(
   recipientUser: UserAccount,
-  requestId: string
+  requestId: string,
+  providedReq?: FriendRequest,
+  providedRequester?: UserAccount
 ): { success: boolean; message: string; friend?: Friend } {
   const myRequests = getStoredRequests(recipientUser.id);
-  const req = myRequests.find((r) => r.id === requestId);
+  const req = providedReq || myRequests.find((r) => r.id === requestId);
   if (!req) {
     return { success: false, message: 'Permintaan tidak ditemukan.' };
   }
 
   const allAccounts = getStoredAccounts();
-  const requester = allAccounts.find((a) => a.id === req.fromUserId);
+  const requester =
+    providedRequester ||
+    allAccounts.find(
+      (a) =>
+        a.id === req.fromUserId ||
+        (req.fromUsername && a.username.toLowerCase() === req.fromUsername.toLowerCase())
+    );
   if (!requester) {
-    // Requester account deleted
-    saveStoredRequests(myRequests.filter((r) => r.id !== requestId), recipientUser.id);
     return { success: false, message: 'Akun pengirim tidak ditemukan.' };
   }
 
