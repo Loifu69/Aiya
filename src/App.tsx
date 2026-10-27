@@ -169,7 +169,7 @@ export default function App() {
     });
 
     // 5. Listen to reciprocal user friends list in real-time
-    const unsubFriends = firestoreSubscribeUserFriends(currentUser.id, (cloudFriends) => {
+    const unsubFriends = firestoreSubscribeUserFriends(currentUser, (cloudFriends) => {
       setFriends(cloudFriends);
       saveStoredFriends(cloudFriends, currentUser.id);
     });
@@ -493,7 +493,8 @@ export default function App() {
     saveStoredFriends(updatedFriends, currentUser.id);
 
     // Deliver nudge directly to target user account inbox & cloud
-    const nudgeEvent = deliverNudgeToUser(currentUser, targetFriend.id, nowIso);
+    const targetUsername = (targetFriend.userCode || '').replace('AIYA-', '').toLowerCase();
+    const nudgeEvent = deliverNudgeToUser(currentUser, targetFriend.id, nowIso, targetUsername);
     if (isFirebaseReady() && nudgeEvent) {
       firestoreSendNudge(nudgeEvent).catch(console.error);
     }
@@ -592,8 +593,8 @@ export default function App() {
         await firestoreAcceptFriendRequest(req, requester, currentUser);
         const myUpdated = getStoredFriends(currentUser.id);
         const reqUpdated = getStoredFriends(requester.id);
-        await firestoreSaveUserFriends(currentUser.id, myUpdated);
-        await firestoreSaveUserFriends(requester.id, reqUpdated);
+        await firestoreSaveUserFriends(currentUser.id, myUpdated, currentUser.username);
+        await firestoreSaveUserFriends(requester.id, reqUpdated, requester.username);
       }
       setFriends(getStoredFriends(currentUser.id));
       setFriendRequests((prev) => prev.filter((r) => r.id !== reqId));

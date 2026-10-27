@@ -785,15 +785,18 @@ export function saveStoredNudges(nudges: NudgeEvent[], targetUserId?: string): v
 
 // Deliver nudge to target user's nudge inbox
 export function deliverNudgeToUser(
-  fromUser: { id: string; name: string },
+  fromUser: { id: string; name: string; username?: string },
   toUserId: string,
-  nowIso: string
+  nowIso: string,
+  toUsername?: string
 ): NudgeEvent {
   const nudgeEvent: NudgeEvent = {
     id: `nudge-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     fromUserId: fromUser.id,
+    fromUsername: fromUser.username?.toLowerCase(),
     fromName: fromUser.name,
     toUserId,
+    toUsername: toUsername?.toLowerCase(),
     timestamp: nowIso,
     message: `${fromUser.name} mengingatkanmu untuk minum.`,
     isRead: false,

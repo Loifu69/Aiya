@@ -303,32 +303,55 @@ export function firestoreSubscribeOutgoingRequests(
   );
 }
 
-export async function firestoreSaveUserFriends(userId: string, friends: Friend[]): Promise<void> {
+export async function firestoreSaveUserFriends(
+  userId: string,
+  friends: Friend[],
+  username?: string
+): Promise<void> {
   const { db } = initFirebase();
   if (!db) return;
 
   try {
     await setDoc(doc(db, 'userFriends', userId), { friends }, { merge: true });
+    if (username) {
+      await setDoc(doc(db, 'userFriends', `usr_${username.toLowerCase().trim()}`), { friends }, { merge: true });
+    }
   } catch (err) {
     console.error('Firestore save userFriends error:', err);
   }
 }
 
 export function firestoreSubscribeUserFriends(
-  userId: string,
+  user: { id: string; username?: string } | string,
   onChange: (friends: Friend[]) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
+  const targetId = typeof user === 'string' ? user : user.id;
+  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
+
+  // Listen to primary userFriends document
   return onSnapshot(
-    doc(db, 'userFriends', userId),
+    doc(db, 'userFriends', targetId),
     (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         if (data && Array.isArray(data.friends)) {
           onChange(data.friends);
+          return;
         }
+      }
+      // If primary not found or empty, check username fallback
+      if (targetUsername) {
+        getDoc(doc(db, 'userFriends', `usr_${targetUsername}`)).then((uSnap) => {
+          if (uSnap.exists()) {
+            const uData = uSnap.data();
+            if (uData && Array.isArray(uData.friends)) {
+              onChange(uData.friends);
+            }
+          }
+        }).catch(() => {});
       }
     },
     (err) => console.warn('UserFriends listener:', err)
