@@ -7,7 +7,7 @@ interface OnboardingModalProps {
 }
 
 export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onComplete }) => {
-  const [name, setName] = useState('Rina');
+  const [name, setName] = useState('');
   const [intervalMinutes, setIntervalMinutes] = useState(180);
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
 
@@ -54,7 +54,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onComp
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Masukkan namamu (misal: Rina)"
+              placeholder="Masukkan namamu"
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:border-sky-500 focus:bg-white"
             />
           </div>

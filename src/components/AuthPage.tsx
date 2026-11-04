@@ -6,14 +6,13 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
-  Sparkles,
   AlertCircle,
   CheckCircle2,
   Users,
   Cloud,
 } from 'lucide-react';
 import { UserAccount } from '../types';
-import { loginAccount, registerAccount, SEED_ACCOUNTS } from '../utils/storage';
+import { loginAccount, registerAccount } from '../utils/storage';
 import { isFirebaseReady } from '../utils/firebase';
 
 interface AuthPageProps {
@@ -66,19 +65,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
     }
   };
 
-  const handleQuickDemoLogin = async (seedUser: UserAccount) => {
-    setUsername(seedUser.username);
-    setPassword(seedUser.password);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    const res = await loginAccount(seedUser.username, seedUser.password);
-    if (res.success && res.user) {
-      setSuccessMsg(`Masuk sebagai ${res.user.name}...`);
-      setTimeout(() => {
-        onAuthSuccess(res.user!);
-      }, 300);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-sky-50 via-slate-50 to-slate-100 flex flex-col justify-center items-center px-4 py-8">
@@ -181,7 +167,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder={mode === 'login' ? 'Masukkan username kamu' : 'Pilih username (misal: rina)'}
+                  placeholder={mode === 'login' ? 'Masukkan username kamu' : 'Pilih username'}
                   className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:border-sky-500 focus:bg-white text-slate-900 placeholder:text-slate-400 transition-colors"
                 />
               </div>
@@ -239,30 +225,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
             </button>
           </form>
 
-          {/* Quick Demo Accounts */}
+          {/* Cloud sync */}
           <div className="mt-6 pt-5 border-t border-slate-100">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 mb-2.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>Coba Akun Demo (Klik untuk masuk langsung):</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {SEED_ACCOUNTS.slice(0, 3).map((seed) => (
-                <button
-                  key={seed.id}
-                  type="button"
-                  onClick={() => handleQuickDemoLogin(seed)}
-                  className="py-2 px-2 text-left rounded-xl border border-slate-200 hover:border-sky-300 hover:bg-sky-50/50 bg-slate-50 transition-all text-xs group cursor-pointer"
-                >
-                  <div className="font-bold text-slate-800 group-hover:text-sky-700">
-                    {seed.name}
-                  </div>
-                  <div className="text-[10px] text-slate-600">
-                    {seed.username === 'sari' ? 'Terlambat' : 'Pass: 123'}
-                  </div>
-                </button>
-              ))}
-            </div>
-
             {onOpenCloudSync && (
               <button
                 type="button"

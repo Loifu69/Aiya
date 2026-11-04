@@ -514,7 +514,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             type="button"
             onClick={onResetToDemoScenario}
             className="w-full sm:w-auto py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
-            title="Reset ke skenario bawaan dokumen (Interval 3 jam, Snooze 10 mnt, Teman Sari/Budi/Andi)"
+            title="Reset ke skenario bawaan dokumen (Interval 3 jam, Snooze 10 mnt)"
           >
             <Sparkles className="w-3.5 h-3.5 text-sky-600" />
             <span>Muat Ulang Skenario Dokumen</span>

@@ -200,7 +200,7 @@ export default function App() {
         });
         const merged = Array.from(mergedMap.values());
         saveStoredAccounts(merged);
-        setAllAccounts(merged);
+        setAllAccounts(getStoredAccounts()); // getStoredAccounts filters removed demo accounts
 
         // Align currentUser with official cloud ID if needed
         const cloudMe = cloudAccounts.find(a => a.username.toLowerCase() === currentUser.username.toLowerCase());

@@ -455,7 +455,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                   <input
                     id="friendIdentifier"
                     type="text"
-                    placeholder="Misal: sari, budi, atau AIYA-SARI"
+                    placeholder="Username atau kode teman (misal: AIYA-XXXX)"
                     value={friendInput}
                     onChange={(e) => setFriendInput(e.target.value)}
                     className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:border-sky-500 focus:bg-white transition-all font-mono"

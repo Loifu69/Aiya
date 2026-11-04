@@ -27,50 +27,19 @@ export const GRACE_PERIOD_MS = 5 * 60 * 1000;
 // Nudge cooldown (15 minutes)
 export const NUDGE_COOLDOWN_MS = 15 * 60 * 1000;
 
-// Default demo accounts matching PDF specification
-export const SEED_ACCOUNTS: UserAccount[] = [
-  {
-    id: 'user-001',
-    username: 'rina',
-    password: '123',
-    name: 'Rina',
-    userCode: 'AIYA-RINA',
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&auto=format&fit=crop&q=80',
-    createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'user-002',
-    username: 'sari',
-    password: '123',
-    name: 'Sari',
-    userCode: 'AIYA-SARI',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-    createdAt: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'user-003',
-    username: 'budi',
-    password: '123',
-    name: 'Budi',
-    userCode: 'AIYA-BUDI',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80',
-    createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'user-004',
-    username: 'andi',
-    password: '123',
-    name: 'Andi',
-    userCode: 'AIYA-ANDI',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80',
-    createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-];
+// Demo accounts have been removed. These old IDs are purged from browsers that still have them cached.
+export const SEED_ACCOUNTS: UserAccount[] = [];
+const REMOVED_DEMO_IDS = new Set(['user-001', 'user-002', 'user-003', 'user-004']);
+const REMOVED_DEMO_USERNAMES = new Set(['rina', 'sari', 'budi', 'andi']);
+
+function isRemovedDemoAccount(a: UserAccount): boolean {
+  return REMOVED_DEMO_IDS.has(a.id) || REMOVED_DEMO_USERNAMES.has((a.username || '').toLowerCase());
+}
 
 export const DEFAULT_USER: UserSettings = {
   userId: 'user-001',
-  name: 'Rina',
-  userCode: 'AIYA-RINA',
+  name: 'Pengguna',
+  userCode: '',
   intervalMinutes: 180, // 3 hours
   snoozeMinutes: 10,    // 10 minutes
   soundType: 'river',
@@ -88,17 +57,18 @@ export function getStoredAccounts(): UserAccount[] {
     const raw = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      if (Array.isArray(parsed)) {
+        const cleaned = (parsed as UserAccount[]).filter((a) => a && !isRemovedDemoAccount(a));
+        if (cleaned.length !== parsed.length) {
+          saveStoredAccounts(cleaned);
+        }
+        return cleaned;
       }
     }
   } catch {
     // fallback
   }
-  // Initialize with seed accounts
-  saveStoredAccounts(SEED_ACCOUNTS);
-  seedInitialStatuses();
-  return SEED_ACCOUNTS;
+  return [];
 }
 
 export function saveStoredAccounts(accounts: UserAccount[]): void {
@@ -107,40 +77,6 @@ export function saveStoredAccounts(accounts: UserAccount[]): void {
   } catch {
     // ignore
   }
-}
-
-function seedInitialStatuses(): void {
-  const now = Date.now();
-
-  // Sari status: Terlambat (dueAt 35 mins ago)
-  const sariStatus: DrinkStatus = {
-    userId: 'user-002',
-    lastDrinkAt: new Date(now - 3.5 * 60 * 60 * 1000).toISOString(),
-    dueAt: new Date(now - 35 * 60 * 1000).toISOString(),
-    nextAlarmAt: new Date(now - 35 * 60 * 1000).toISOString(),
-    reminderState: 'IDLE',
-  };
-  saveStoredDrinkStatus(sariStatus, 'user-002');
-
-  // Budi status: Sudah minum (dueAt 140 mins in future)
-  const budiStatus: DrinkStatus = {
-    userId: 'user-003',
-    lastDrinkAt: new Date(now - 40 * 60 * 1000).toISOString(),
-    dueAt: new Date(now + 140 * 60 * 1000).toISOString(),
-    nextAlarmAt: new Date(now + 140 * 60 * 1000).toISOString(),
-    reminderState: 'IDLE',
-  };
-  saveStoredDrinkStatus(budiStatus, 'user-003');
-
-  // Andi status: Sudah minum (dueAt 60 mins in future)
-  const andiStatus: DrinkStatus = {
-    userId: 'user-004',
-    lastDrinkAt: new Date(now - 60 * 60 * 1000).toISOString(),
-    dueAt: new Date(now + 60 * 60 * 1000).toISOString(),
-    nextAlarmAt: new Date(now + 60 * 60 * 1000).toISOString(),
-    reminderState: 'IDLE',
-  };
-  saveStoredDrinkStatus(andiStatus, 'user-004');
 }
 
 export function getActiveSessionUserId(): string | null {
