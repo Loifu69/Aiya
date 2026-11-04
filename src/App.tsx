@@ -61,7 +61,6 @@ import { HistoryPage } from './components/HistoryPage';
 import { ConfirmModal } from './components/ConfirmModal';
 import { NudgeToast } from './components/NudgeToast';
 import { OnboardingModal } from './components/OnboardingModal';
-import { DocumentScenarioModal } from './components/DocumentScenarioModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import {
   firestoreSaveDrinkStatus,
@@ -165,7 +164,6 @@ export default function App() {
   const [activeNudge, setActiveNudge] = useState<NudgeEvent | null>(null);
   const [lastFeedbackMessage, setLastFeedbackMessage] = useState<string | null>(null);
   const [nudgeSuccessBanner, setNudgeSuccessBanner] = useState<string | null>(null);
-  const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
   const [isSoundMuted, setIsSoundMuted] = useState(false);
 
   // PWA Install Prompt State
@@ -812,42 +810,6 @@ export default function App() {
     setTimeout(() => setLastFeedbackMessage(null), 3000);
   }, [currentTimeMs, currentUser]);
 
-  // Apply Document Scenario B (09:00 Belum, 09:10 Belum, 09:20 Sudah -> 12:20)
-  const handleApplyScenarioB = useCallback(() => {
-    if (!currentUser) return;
-    stopWaterSound();
-    isRingingRef.current = false;
-
-    // Simulate current time as 09:20 today
-    const now = new Date();
-    now.setHours(9, 20, 0, 0);
-    const mockNowMs = now.getTime();
-    simOffsetRef.current = mockNowMs - Date.now();
-    setCurrentTimeMs(mockNowMs);
-
-    // After answering "Sudah" at 09:20 with 3-hour interval:
-    const nextDrink = new Date(mockNowMs + 180 * 60 * 1000); // 12:20!
-    const updatedStatus: DrinkStatus = {
-      userId: currentUser.id,
-      lastDrinkAt: now.toISOString(),
-      dueAt: nextDrink.toISOString(),
-      nextAlarmAt: nextDrink.toISOString(),
-      reminderState: 'IDLE',
-    };
-
-    setDrinkStatus(updatedStatus);
-    saveStoredDrinkStatus(updatedStatus, currentUser.id);
-
-    addStoredLog({
-      userId: currentUser.id,
-      action: 'SUDAH',
-      timestamp: now.toISOString(),
-      note: 'Skenario B: Terakhir minum 09:20, berikutnya 12:20',
-    }, currentUser.id);
-
-    setLastFeedbackMessage('Skenario B aktif: Waktu disetel ke 09:20, jadwal berikutnya 12:20!');
-  }, [currentUser]);
-
   // Complete onboarding
   const handleCompleteOnboarding = (data: { name: string; intervalMinutes: number; snoozeMinutes: number }) => {
     if (!currentUser) return;
@@ -904,7 +866,6 @@ export default function App() {
           setIsSoundMuted(!isSoundMuted);
           if (!isSoundMuted) stopWaterSound();
         }}
-        onOpenScenarioModal={() => setIsScenarioModalOpen(true)}
         onLogout={handleLogout}
         canInstallPwa={Boolean(deferredPrompt) && !isInstalledPwa}
         onInstallPwa={handleInstallPwa}
@@ -994,13 +955,6 @@ export default function App() {
       <OnboardingModal
         isOpen={!settings.isOnboarded}
         onComplete={handleCompleteOnboarding}
-      />
-
-      {/* Interactive Scenario Walkthrough Modal (Section 7) */}
-      <DocumentScenarioModal
-        isOpen={isScenarioModalOpen}
-        onClose={() => setIsScenarioModalOpen(false)}
-        onApplyScenarioB={handleApplyScenarioB}
       />
 
       {/* Cloud Database Sync Modal (Firebase Firestore) */}

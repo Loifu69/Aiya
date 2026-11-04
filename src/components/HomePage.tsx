@@ -189,31 +189,6 @@ export const HomePage: React.FC<HomePageProps> = ({
           </button>
         </div>
       </section>
-
-      {/* Dynamic Rule Summary according to PDF Section 6 */}
-      <section className="bg-white rounded-2xl p-5 border border-slate-200 text-slate-700 text-xs space-y-2.5">
-        <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-          <Info className="w-4 h-4 text-sky-600" />
-          <span>Cara Kerja Penjadwalan Dinamis Aiya</span>
-        </div>
-        <p className="leading-relaxed">
-          Seluruh jadwal dihitung dari <strong>waktu pengguna menekan tombol</strong>, bukan dari jadwal awal yang kaku:
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          <div className="p-3 bg-sky-50/70 border border-sky-100 rounded-xl">
-            <span className="font-semibold text-sky-900 block mb-1">Jika tekan &quot;Sudah&quot;:</span>
-            <p className="text-slate-600 leading-normal">
-              Jadwal berikutnya = waktu sekarang + interval utama ({Math.round(settings.intervalMinutes / 60)} jam). Suara berhenti &amp; status teman kembali segar.
-            </p>
-          </div>
-          <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl">
-            <span className="font-semibold text-amber-900 block mb-1">Jika tekan &quot;Belum&quot;:</span>
-            <p className="text-slate-600 leading-normal">
-              Alarm diulang lebih cepat = sekarang + {settings.snoozeMinutes} menit. Jadwal utama (dueAt) tetap, sehingga teman melihat status terlambat dan bisa mengingatkanmu.
-            </p>
-          </div>
-        </div>
-      </section>
     </div>
   );
 };

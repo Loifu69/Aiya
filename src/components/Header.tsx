@@ -1,5 +1,5 @@
 import React from 'react';
-import { Droplets, Volume2, VolumeX, Sparkles, LogOut, Download } from 'lucide-react';
+import { Droplets, Volume2, VolumeX, LogOut, Download } from 'lucide-react';
 import { ReminderState, UserAccount } from '../types';
 
 interface HeaderProps {
@@ -7,7 +7,6 @@ interface HeaderProps {
   reminderState: ReminderState;
   isSoundMuted: boolean;
   onToggleMute: () => void;
-  onOpenScenarioModal: () => void;
   onLogout: () => void;
   canInstallPwa?: boolean;
   onInstallPwa?: () => void;
@@ -18,7 +17,6 @@ export const Header: React.FC<HeaderProps> = ({
   reminderState,
   isSoundMuted,
   onToggleMute,
-  onOpenScenarioModal,
   onLogout,
   canInstallPwa,
   onInstallPwa,
@@ -61,7 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
 
-        {/* Zone 3: Actions (Install PWA button, Sound mute, Scenario Walkthrough) */}
+        {/* Zone 3: Actions (Install PWA button, Sound mute) */}
         <div className="flex items-center gap-1.5">
           {canInstallPwa && onInstallPwa && (
             <button
@@ -73,15 +71,6 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Install App</span>
             </button>
           )}
-
-          <button
-            onClick={onOpenScenarioModal}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            title="Lihat simulasi Skenario A, B, C dari Dokumen"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-sky-600" />
-            <span className="hidden sm:inline">Skenario PDF</span>
-          </button>
 
           <button
             onClick={onToggleMute}
