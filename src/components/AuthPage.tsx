@@ -226,18 +226,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
           </form>
 
           {/* Cloud sync */}
-          <div className="mt-6 pt-5 border-t border-slate-100">
-            {onOpenCloudSync && (
+          {onOpenCloudSync && (
+            <div className="mt-5 pt-4 border-t border-slate-100">
               <button
                 type="button"
                 onClick={onOpenCloudSync}
-                className="mt-3.5 pt-3 border-t border-slate-100 text-[11px] text-sky-600 hover:text-sky-800 font-semibold flex items-center justify-center gap-1.5 w-full cursor-pointer transition-colors"
+                className="text-[11px] text-sky-600 hover:text-sky-800 font-semibold flex items-center justify-center gap-1.5 w-full cursor-pointer transition-colors"
               >
                 <Cloud className="w-3.5 h-3.5" />
                 <span>{isFirebaseReady() ? '✓ Database Cloud Terhubung' : 'Hubungkan ke Database Online (Firebase)'}</span>
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Footer info */}
