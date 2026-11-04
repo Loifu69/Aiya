@@ -230,3 +230,21 @@ export function playSuccessChime() {
     // ignore
   }
 }
+
+// Unlock audio on the first user interaction so alarms can play later,
+// even when the tab is in the background (browser autoplay policy).
+export function setupAudioUnlock(): void {
+  const unlock = () => {
+    try {
+      getAudioContext();
+    } catch {
+      // ignore
+    }
+    window.removeEventListener('pointerdown', unlock);
+    window.removeEventListener('keydown', unlock);
+    window.removeEventListener('touchstart', unlock);
+  };
+  window.addEventListener('pointerdown', unlock);
+  window.addEventListener('keydown', unlock);
+  window.addEventListener('touchstart', unlock);
+}

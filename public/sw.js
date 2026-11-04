@@ -1,5 +1,5 @@
 // Aiya PWA Service Worker
-const CACHE_NAME = 'aiya-pwa-v1';
+const CACHE_NAME = 'aiya-pwa-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -64,6 +64,19 @@ self.addEventListener('fetch', (event) => {
         .catch(() => cachedResponse);
 
       return cachedResponse || fetchPromise;
+    })
+  );
+});
+
+// Clicking a notification brings the Aiya tab/app to the front
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('/#home');
     })
   );
 });

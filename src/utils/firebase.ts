@@ -123,8 +123,15 @@ export async function firestoreRegisterAccount(
     await setDoc(doc(db, 'accounts', account.id), account);
     // Save settings
     await setDoc(doc(db, 'settings', account.id), settings);
-    // Save status
-    await setDoc(doc(db, 'statuses', account.id), status);
+    // Save status only if cloud has none or local one is newer (avoid stale overwrite on new device)
+    const statusRef = doc(db, 'statuses', account.id);
+    const existing = await getDoc(statusRef);
+    const cloudStatus = existing.exists() ? (existing.data() as DrinkStatus) : null;
+    const cloudMs = cloudStatus?.lastDrinkAt ? new Date(cloudStatus.lastDrinkAt).getTime() : 0;
+    const localMs = status.lastDrinkAt ? new Date(status.lastDrinkAt).getTime() : 0;
+    if (!cloudStatus || localMs > cloudMs) {
+      await setDoc(statusRef, { ...status, userId: account.id });
+    }
     return true;
   } catch (err) {
     console.error('Firestore register error:', err);
@@ -142,6 +149,13 @@ export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
     await deleteDoc(doc(db, 'settings', userId));
     await deleteDoc(doc(db, 'statuses', userId));
     await deleteDoc(doc(db, 'userFriends', userId));
+
+    // Delete friendships involving this user (both sides lose the friend)
+    const f1 = await getDocs(query(collection(db, 'friendships'), where('user1Id', '==', userId)));
+    const f2 = await getDocs(query(collection(db, 'friendships'), where('user2Id', '==', userId)));
+    for (const d of [...f1.docs, ...f2.docs]) {
+      await deleteDoc(doc(db, 'friendships', d.id));
+    }
 
     // Delete friend requests where user was sender or recipient
     const reqsSnap = await getDocs(collection(db, 'friendRequests'));
@@ -359,36 +373,218 @@ export function firestoreSubscribeUserFriends(
               onChange(uData.friends);
             }
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }
     },
     (err) => console.warn('UserFriends listener:', err)
   );
 }
 
+function getFriendshipId(userAId: string, userBId: string): string {
+  return [userAId, userBId].sort().join('_');
+}
+
 export async function firestoreAcceptFriendRequest(
   request: FriendRequest,
   requesterUser: UserAccount,
   recipientUser: UserAccount
-): Promise<void> {
+): Promise<boolean> {
   const { db } = initFirebase();
-  if (!db) return;
+  if (!db) return false;
 
   try {
-    // Delete pending request
-    await deleteDoc(doc(db, 'friendRequests', request.id));
-
-    // Save mutual friendship record
-    const friendshipId = [requesterUser.id, recipientUser.id].sort().join('_');
+    // Save mutual friendship record FIRST (single source of truth for both users)
+    const friendshipId = getFriendshipId(requesterUser.id, recipientUser.id);
     await setDoc(doc(db, 'friendships', friendshipId), {
       id: friendshipId,
       user1Id: requesterUser.id,
       user2Id: recipientUser.id,
       createdAt: new Date().toISOString(),
     });
+
+    // Then delete pending request
+    await deleteDoc(doc(db, 'friendRequests', request.id));
+    return true;
   } catch (err) {
     console.error('Firestore accept request error:', err);
+    return false;
   }
+}
+
+// Remove friendship for BOTH users (deletes the shared record + legacy per-user lists)
+export async function firestoreRemoveFriendship(userAId: string, userBId: string): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    await deleteDoc(doc(db, 'friendships', getFriendshipId(userAId, userBId)));
+
+    // Clean legacy userFriends docs so an old list can never resurrect the friendship
+    for (const [ownerId, otherId] of [[userAId, userBId], [userBId, userAId]]) {
+      const ref = doc(db, 'userFriends', ownerId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const list = (snap.data().friends || []) as Friend[];
+        if (list.some((f) => f.id === otherId)) {
+          await setDoc(ref, { friends: list.filter((f) => f.id !== otherId) }, { merge: true });
+        }
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error('Firestore remove friendship error:', err);
+    return false;
+  }
+}
+
+// One-time migration: convert old per-user userFriends lists into shared friendships records
+export async function firestoreMigrateLegacyFriends(userId: string, username?: string): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+
+  const legacyIds = [userId];
+  if (username) legacyIds.push(`usr_${username.toLowerCase().trim()}`);
+
+  try {
+    for (const legacyId of legacyIds) {
+      const ref = doc(db, 'userFriends', legacyId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) continue;
+      const list = (snap.data().friends || []) as Friend[];
+      for (const f of list) {
+        if (!f?.id || f.id === userId) continue;
+        const fsRef = doc(db, 'friendships', getFriendshipId(userId, f.id));
+        const fsSnap = await getDoc(fsRef);
+        if (!fsSnap.exists()) {
+          await setDoc(fsRef, {
+            id: fsRef.id,
+            user1Id: f.id,
+            user2Id: userId,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+      // Legacy list no longer used
+      await deleteDoc(ref);
+    }
+  } catch (err) {
+    console.error('Firestore migrate legacy friends error:', err);
+  }
+}
+
+export interface LiveFriendData {
+  id: string;
+  account: UserAccount | null;
+  status: DrinkStatus | null;
+}
+
+// Realtime friends list: reads shared friendships + each friend's live drink status
+export function firestoreSubscribeFriendsLive(
+  userId: string,
+  onChange: (friends: LiveFriendData[]) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  let disposed = false;
+  let ready1 = false;
+  let ready2 = false;
+  let ids1: string[] = [];
+  let ids2: string[] = [];
+  const accountCache = new Map<string, UserAccount | null>();
+  const statusCache = new Map<string, DrinkStatus | null>();
+  const statusUnsubs = new Map<string, Unsubscribe>();
+
+  const currentIds = () => Array.from(new Set([...ids1, ...ids2])).filter((id) => id && id !== userId);
+
+  const emit = () => {
+    if (disposed || !ready1 || !ready2) return;
+    onChange(
+      currentIds().map((id) => ({
+        id,
+        account: accountCache.get(id) ?? null,
+        status: statusCache.get(id) ?? null,
+      }))
+    );
+  };
+
+  const refreshListeners = () => {
+    if (disposed || !ready1 || !ready2) return;
+    const ids = currentIds();
+
+    // Stop listening to removed friends
+    for (const [id, unsub] of statusUnsubs.entries()) {
+      if (!ids.includes(id)) {
+        unsub();
+        statusUnsubs.delete(id);
+        statusCache.delete(id);
+      }
+    }
+
+    for (const id of ids) {
+      if (!statusUnsubs.has(id)) {
+        statusUnsubs.set(
+          id,
+          onSnapshot(
+            doc(db, 'statuses', id),
+            (snap) => {
+              statusCache.set(id, snap.exists() ? (snap.data() as DrinkStatus) : null);
+              emit();
+            },
+            (err) => console.warn('Friend status listener:', err)
+          )
+        );
+      }
+      if (!accountCache.has(id)) {
+        accountCache.set(id, null);
+        getDoc(doc(db, 'accounts', id))
+          .then((snap) => {
+            if (snap.exists()) {
+              accountCache.set(id, snap.data() as UserAccount);
+              emit();
+            }
+          })
+          .catch(() => { });
+      }
+    }
+    emit();
+  };
+
+  const unsub1 = onSnapshot(
+    query(collection(db, 'friendships'), where('user1Id', '==', userId)),
+    (snap) => {
+      ids1 = snap.docs.map((d) => d.data().user2Id as string);
+      ready1 = true;
+      refreshListeners();
+    },
+    (err) => {
+      console.warn('Friendships listener (1):', err);
+      ready1 = true;
+      refreshListeners();
+    }
+  );
+
+  const unsub2 = onSnapshot(
+    query(collection(db, 'friendships'), where('user2Id', '==', userId)),
+    (snap) => {
+      ids2 = snap.docs.map((d) => d.data().user1Id as string);
+      ready2 = true;
+      refreshListeners();
+    },
+    (err) => {
+      console.warn('Friendships listener (2):', err);
+      ready2 = true;
+      refreshListeners();
+    }
+  );
+
+  return () => {
+    disposed = true;
+    unsub1();
+    unsub2();
+    for (const unsub of statusUnsubs.values()) unsub();
+    statusUnsubs.clear();
+  };
 }
 
 export async function firestoreRejectFriendRequest(requestId: string): Promise<void> {

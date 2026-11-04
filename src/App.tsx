@@ -34,6 +34,9 @@ import {
   NUDGE_COOLDOWN_MS,
   rejectFriendRequest,
   removeMutualFriendship,
+  saveStoredAccounts,
+  saveStoredRequests,
+  setActiveSessionUserId,
   saveStoredDrinkStatus,
   saveStoredFriends,
   saveStoredNudges,
@@ -74,8 +77,9 @@ import {
   firestoreRegisterAccount,
   firestoreGetAllAccounts,
   firestoreFindAccountByUsername,
-  firestoreSaveUserFriends,
-  firestoreSubscribeUserFriends,
+  firestoreSubscribeFriendsLive,
+  firestoreMigrateLegacyFriends,
+  firestoreRemoveFriendship,
   isFirebaseReady,
 } from './utils/firebase';
 
@@ -95,6 +99,33 @@ function getInitialTab(): NavTab {
     // fallback
   }
   return 'home';
+}
+
+// Show an OS notification. Prefers the Service Worker (required on Android Chrome,
+// more reliable when the tab is in the background), falls back to new Notification().
+async function showSystemNotification(title: string, body: string, tag: string) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const options: NotificationOptions & { vibrate?: number[]; renotify?: boolean } = {
+    body,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag,
+    renotify: true,
+    requireInteraction: true,
+    vibrate: [300, 150, 300],
+  };
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        await reg.showNotification(title, options);
+        return;
+      }
+    }
+    new Notification(title, options);
+  } catch {
+    // ignore
+  }
 }
 
 export default function App() {
@@ -127,6 +158,9 @@ export default function App() {
 
   // Time & Simulator state (allows live ticking + fast forward)
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(Date.now());
+  // Simulator offset (ms) added on top of the REAL clock, so time never drifts
+  // even when the browser throttles timers in background tabs.
+  const simOffsetRef = useRef(0);
   const [currentTab, setCurrentTab] = useState<NavTab>(getInitialTab);
   const [activeNudge, setActiveNudge] = useState<NudgeEvent | null>(null);
   const [lastFeedbackMessage, setLastFeedbackMessage] = useState<string | null>(null);
@@ -188,16 +222,42 @@ export default function App() {
       setOutgoingRequests(cloudOut);
     });
 
-    // 5. Listen to reciprocal user friends list in real-time
-    const unsubFriends = firestoreSubscribeUserFriends(currentUser, (cloudFriends) => {
-      setFriends(cloudFriends);
-      saveStoredFriends(cloudFriends, currentUser.id);
+    // 5. Listen to shared friendships (single source of truth for BOTH users)
+    //    + each friend's live drink status from cloud
+    firestoreMigrateLegacyFriends(currentUser.id, currentUser.username).catch(() => {});
+    const unsubFriends = firestoreSubscribeFriendsLive(currentUser.id, (liveFriends) => {
+      const previous = getStoredFriends(currentUser.id); // keeps local prefs (mute, nudge cooldown)
+      const knownAccounts = getStoredAccounts();
+      const built: Friend[] = liveFriends.map(({ id, account, status }) => {
+        const old = previous.find((f) => f.id === id);
+        const acc = account || knownAccounts.find((a) => a.id === id);
+        return {
+          id,
+          name: acc?.name || old?.name || 'Teman',
+          userCode: acc?.userCode || old?.userCode || '',
+          avatar:
+            acc?.avatar ||
+            old?.avatar ||
+            `https://api.dicebear.com/7.x/bottts/svg?seed=${acc?.username || id}`,
+          lastDrinkAt: status ? status.lastDrinkAt : old?.lastDrinkAt ?? null,
+          dueAt: status?.dueAt || old?.dueAt || new Date().toISOString(),
+          lastNudgeAt: old?.lastNudgeAt ?? null,
+          isMuted: old?.isMuted,
+        };
+      });
+      setFriends(built);
+      saveStoredFriends(built, currentUser.id);
     });
 
     // 6. Listen to incoming nudges from cloud
     const unsubNudges = firestoreSubscribeNudges(currentUser, (cloudNudge) => {
       setActiveNudge(cloudNudge);
       playNudgeTone();
+      showSystemNotification(
+        `${cloudNudge.fromName || 'Temanmu'} mengingatkanmu!`,
+        cloudNudge.message || 'Ayo minum air sekarang.',
+        'aiya-nudge'
+      );
       if (currentUser) {
         markStoredNudgeAsRead(cloudNudge.id, currentUser.id);
       }
@@ -307,12 +367,21 @@ export default function App() {
     return res;
   }, [currentUser]);
 
-  // Live timer tick every 1000ms
+  // Live clock: always derived from the real clock (Date.now) + simulator offset.
+  // Background tabs may tick rarely, but every tick catches up to the true time.
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTimeMs((prev) => prev + 1000);
-    }, 1000);
-    return () => clearInterval(timer);
+    const tick = () => setCurrentTimeMs(Date.now() + simOffsetRef.current);
+    const timer = setInterval(tick, 1000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', tick);
+    };
   }, []);
 
   // Periodically refresh friend status, requests, and nudges (only when offline/no Firebase)
@@ -385,16 +454,9 @@ export default function App() {
         playWaterSound(settings.soundType, settings.volume);
       }
 
-      // Browser Notification if supported
-      if ('Notification' in window && Notification.permission === 'granted') {
-        try {
-          new Notification('Aiya: Waktunya Minum!', {
-            body: 'Waktunya minum. Dengarkan suara airnya.',
-            icon: '/favicon.ico',
-          });
-        } catch {
-          // ignore
-        }
+      // System notification (via Service Worker so it also works on Android & background tabs)
+      if (!inQuiet) {
+        showSystemNotification('Aiya: Waktunya Minum!', 'Waktunya minum. Dengarkan suara airnya.', 'aiya-drink');
       }
     }
   }, [currentUser, currentTimeMs, drinkStatus, settings, isSoundMuted]);
@@ -535,7 +597,8 @@ export default function App() {
 
   // Simulator: fast forward time
   const handleFastForward = useCallback((minutes: number) => {
-    setCurrentTimeMs((prev) => prev + minutes * 60 * 1000);
+    simOffsetRef.current += minutes * 60 * 1000;
+    setCurrentTimeMs(Date.now() + simOffsetRef.current);
   }, []);
 
   // Nudge friend (Section 17.4)
@@ -613,8 +676,16 @@ export default function App() {
     }
 
     const res = sendFriendRequest(currentUser, matched);
-    if (res.success && res.request && isFirebaseReady()) {
-      await firestoreSendFriendRequest(res.request);
+    if (res.success && isFirebaseReady()) {
+      if (res.acceptedRequest) {
+        // Both sent requests to each other -> create the shared friendship in cloud
+        const ok = await firestoreAcceptFriendRequest(res.acceptedRequest, matched, currentUser);
+        if (!ok) {
+          return { success: false, message: 'Gagal menyimpan pertemanan ke cloud. Periksa koneksi lalu coba lagi.' };
+        }
+      } else if (res.request) {
+        await firestoreSendFriendRequest(res.request);
+      }
     }
 
     // Refresh outgoing requests & friends
@@ -655,15 +726,16 @@ export default function App() {
       return;
     }
 
+    if (isFirebaseReady()) {
+      const ok = await firestoreAcceptFriendRequest(req, requester, currentUser);
+      if (!ok) {
+        alert('Gagal menyimpan pertemanan ke cloud. Periksa koneksi lalu coba lagi.');
+        return;
+      }
+    }
+
     const res = acceptFriendRequest(currentUser, reqId, req, requester);
     if (res.success) {
-      if (isFirebaseReady()) {
-        await firestoreAcceptFriendRequest(req, requester, currentUser);
-        const myUpdated = getStoredFriends(currentUser.id);
-        const reqUpdated = getStoredFriends(requester.id);
-        await firestoreSaveUserFriends(currentUser.id, myUpdated, currentUser.username);
-        await firestoreSaveUserFriends(requester.id, reqUpdated, requester.username);
-      }
       setFriends(getStoredFriends(currentUser.id));
       setFriendRequests((prev) => prev.filter((r) => r.id !== reqId));
       setOutgoingRequests(getOutgoingRequests(currentUser.id));
@@ -683,8 +755,15 @@ export default function App() {
   }, [currentUser]);
 
   // Remove Mutual Friend
-  const handleRemoveFriend = useCallback((friendId: string) => {
+  const handleRemoveFriend = useCallback(async (friendId: string) => {
     if (!currentUser) return;
+    if (isFirebaseReady()) {
+      const ok = await firestoreRemoveFriendship(currentUser.id, friendId);
+      if (!ok) {
+        alert('Gagal menghapus teman di cloud. Periksa koneksi lalu coba lagi.');
+        return;
+      }
+    }
     removeMutualFriendship(currentUser.id, friendId);
     setFriends(getStoredFriends(currentUser.id));
   }, [currentUser]);
@@ -743,6 +822,7 @@ export default function App() {
     const now = new Date();
     now.setHours(9, 20, 0, 0);
     const mockNowMs = now.getTime();
+    simOffsetRef.current = mockNowMs - Date.now();
     setCurrentTimeMs(mockNowMs);
 
     // After answering "Sudah" at 09:20 with 3-hour interval:

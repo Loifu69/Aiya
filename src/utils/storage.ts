@@ -13,6 +13,7 @@ import {
   firestoreGetAllAccounts,
   firestoreRegisterAccount,
   firestoreDeleteAccount,
+  firestoreSaveDrinkStatus,
   isFirebaseReady,
 } from './firebase';
 
@@ -445,6 +446,11 @@ export function saveStoredDrinkStatus(status: DrinkStatus, targetUserId?: string
   } catch {
     // ignore
   }
+
+  // Push the active user's own status to cloud so friends see it live
+  if (uid === getActiveSessionUserId() && isFirebaseReady()) {
+    firestoreSaveDrinkStatus(uid, { ...status, userId: uid }).catch(() => { });
+  }
 }
 
 export function getStoredLogs(targetUserId?: string): DrinkLog[] {
@@ -616,7 +622,7 @@ export function getOutgoingRequests(userId: string): FriendRequest[] {
 export function sendFriendRequest(
   fromUser: UserAccount,
   targetAccount: UserAccount
-): { success: boolean; message: string; request?: FriendRequest } {
+): { success: boolean; message: string; request?: FriendRequest; acceptedRequest?: FriendRequest } {
   if (fromUser.id === targetAccount.id) {
     return { success: false, message: 'Tidak dapat menambahkan diri sendiri sebagai teman.' };
   }
@@ -634,9 +640,10 @@ export function sendFriendRequest(
   );
   if (existingIncoming) {
     // Mutual request! Auto-accept into mutual friendship
-    acceptFriendRequest(fromUser, existingIncoming.id);
+    acceptFriendRequest(fromUser, existingIncoming.id, existingIncoming, targetAccount);
     return {
       success: true,
+      acceptedRequest: existingIncoming,
       message: `${targetAccount.name} juga telah mengirimkan permintaan kepadamu. Sekarang kalian resmi berteman!`,
     };
   }
