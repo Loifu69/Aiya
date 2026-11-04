@@ -79,6 +79,7 @@ import {
   firestoreMigrateLegacyFriends,
   firestoreRemoveFriendship,
   firestoreSaveSettings,
+  firestoreUpdateAccountName,
   firestoreGetSettings,
   isFirebaseReady,
 } from './utils/firebase';
@@ -216,6 +217,18 @@ export default function App() {
         const merged = { ...getStoredSettings(currentUser.id), ...cloudSettings, userId: currentUser.id };
         setSettings(merged);
         saveStoredSettings(merged, currentUser.id);
+
+        // Align the account's display name with the saved settings name
+        const settingsName = (merged.name || '').trim();
+        if (settingsName && settingsName !== currentUser.name) {
+          firestoreUpdateAccountName(currentUser.id, settingsName).then((ok) => {
+            if (!ok) return;
+            const updatedAccount: UserAccount = { ...currentUser, name: settingsName };
+            saveStoredAccounts(getStoredAccounts().map((a) => (a.id === updatedAccount.id ? updatedAccount : a)));
+            setAllAccounts(getStoredAccounts());
+            setCurrentUser(updatedAccount);
+          });
+        }
       }
     }).catch(() => {});
 
@@ -791,15 +804,27 @@ export default function App() {
     if (!currentUser) return { success: false, message: 'Harap masuk terlebih dahulu' };
     const updated: UserSettings = { ...settings, ...newPartial, userId: currentUser.id };
 
+    const nameChanged = !!updated.name && updated.name !== currentUser.name;
+
     if (isFirebaseReady()) {
       const ok = await firestoreSaveSettings(currentUser.id, updated);
-      if (!ok) {
+      const nameOk = nameChanged ? await firestoreUpdateAccountName(currentUser.id, updated.name) : true;
+      if (!ok || !nameOk) {
         return { success: false, message: 'Gagal menyimpan ke database cloud. Periksa koneksi lalu coba lagi.' };
       }
     }
 
     setSettings(updated);
     saveStoredSettings(updated, currentUser.id);
+
+    // Display name also lives on the account (used by header & friends' view)
+    if (nameChanged) {
+      const updatedAccount: UserAccount = { ...currentUser, name: updated.name };
+      const accounts = getStoredAccounts();
+      saveStoredAccounts(accounts.map((a) => (a.id === updatedAccount.id ? updatedAccount : a)));
+      setAllAccounts(getStoredAccounts());
+      setCurrentUser(updatedAccount);
+    }
     return { success: true };
   }, [currentUser, settings]);
 

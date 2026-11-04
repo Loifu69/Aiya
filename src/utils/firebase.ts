@@ -284,6 +284,20 @@ export async function firestoreGetAllAccounts(): Promise<UserAccount[]> {
   }
 }
 
+// Cloud Account: update display name (friends see it live)
+export async function firestoreUpdateAccountName(userId: string, name: string): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    await setDoc(doc(db, 'accounts', userId), { name }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error('Firestore update account name error:', err);
+    return false;
+  }
+}
+
 // Cloud Settings: Save & Load
 export async function firestoreSaveSettings(userId: string, settings: UserSettings): Promise<boolean> {
   const { db } = initFirebase();
@@ -589,6 +603,7 @@ export function firestoreSubscribeFriendsLive(
   const accountCache = new Map<string, UserAccount | null>();
   const statusCache = new Map<string, DrinkStatus | null>();
   const statusUnsubs = new Map<string, Unsubscribe>();
+  const accountUnsubs = new Map<string, Unsubscribe>();
 
   const currentIds = () => Array.from(new Set([...ids1, ...ids2])).filter((id) => id && id !== userId);
 
@@ -615,6 +630,13 @@ export function firestoreSubscribeFriendsLive(
         statusCache.delete(id);
       }
     }
+    for (const [id, unsub] of accountUnsubs.entries()) {
+      if (!ids.includes(id)) {
+        unsub();
+        accountUnsubs.delete(id);
+        accountCache.delete(id);
+      }
+    }
 
     for (const id of ids) {
       if (!statusUnsubs.has(id)) {
@@ -630,16 +652,19 @@ export function firestoreSubscribeFriendsLive(
           )
         );
       }
-      if (!accountCache.has(id)) {
-        accountCache.set(id, null);
-        getDoc(doc(db, 'accounts', id))
-          .then((snap) => {
-            if (snap.exists()) {
-              accountCache.set(id, snap.data() as UserAccount);
+      // Live account listener so name/avatar changes show up immediately
+      if (!accountUnsubs.has(id)) {
+        accountUnsubs.set(
+          id,
+          onSnapshot(
+            doc(db, 'accounts', id),
+            (snap) => {
+              accountCache.set(id, snap.exists() ? (snap.data() as UserAccount) : null);
               emit();
-            }
-          })
-          .catch(() => { });
+            },
+            (err) => console.warn('Friend account listener:', err)
+          )
+        );
       }
     }
     emit();
@@ -679,6 +704,8 @@ export function firestoreSubscribeFriendsLive(
     unsub2();
     for (const unsub of statusUnsubs.values()) unsub();
     statusUnsubs.clear();
+    for (const unsub of accountUnsubs.values()) unsub();
+    accountUnsubs.clear();
   };
 }
 
