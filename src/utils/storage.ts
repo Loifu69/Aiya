@@ -11,7 +11,7 @@ import {
 import {
   firestoreFindAccountByUsername,
   firestoreGetAllAccounts,
-  firestoreRegisterAccount,
+  firestoreCreateAccountUnique,
   firestoreDeleteAccount,
   firestoreSaveDrinkStatus,
   isFirebaseReady,
@@ -132,19 +132,7 @@ export async function registerAccount(
   const accounts = getStoredAccounts();
   const existing = accounts.find((a) => a.username.toLowerCase() === username);
   if (existing) {
-    return { success: false, message: `Username "${username}" sudah digunakan, silakan pilih yang lain.` };
-  }
-
-  // Also check cloud Firestore if connected
-  if (isFirebaseReady()) {
-    try {
-      const cloudExisting = await firestoreFindAccountByUsername(username);
-      if (cloudExisting) {
-        return { success: false, message: `Username "${username}" sudah digunakan di database cloud.` };
-      }
-    } catch {
-      // ignore
-    }
+    return { success: false, message: 'Username telah digunakan' };
   }
 
   const userId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -161,9 +149,6 @@ export async function registerAccount(
     createdAt: new Date().toISOString(),
   };
 
-  const updatedAccounts = [...accounts, newAccount];
-  saveStoredAccounts(updatedAccounts);
-
   // Initialize Default Settings for this user
   const newSettings: UserSettings = {
     userId,
@@ -178,7 +163,6 @@ export async function registerAccount(
     quietEnd: '07:00',
     isOnboarded: true,
   };
-  saveStoredSettings(newSettings, userId);
 
   // Initialize Default Drink Status
   const now = Date.now();
@@ -190,20 +174,30 @@ export async function registerAccount(
     nextAlarmAt: nextTime,
     reminderState: 'IDLE',
   };
+
+  // Create in cloud FIRST with a unique username reservation.
+  // If the cloud is unreachable, do NOT create a local-only account (it would be invisible to friends).
+  if (isFirebaseReady()) {
+    const result = await firestoreCreateAccountUnique(newAccount, newSettings, initialStatus);
+    if (result === 'taken') {
+      return { success: false, message: 'Username telah digunakan' };
+    }
+    if (result === 'error') {
+      return {
+        success: false,
+        message: 'Gagal terhubung ke database cloud. Periksa koneksi internet lalu coba lagi.',
+      };
+    }
+  }
+
+  // Save locally only after the cloud accepted the account
+  saveStoredAccounts([...accounts, newAccount]);
+  saveStoredSettings(newSettings, userId);
   saveStoredDrinkStatus(initialStatus, userId);
 
   // New user starts with EMPTY friend list and requests (must be approved two-way!)
   saveStoredFriends([], userId);
   saveStoredRequests([], userId);
-
-  // Sync to Cloud Firestore if connected!
-  if (isFirebaseReady()) {
-    try {
-      await firestoreRegisterAccount(newAccount, newSettings, initialStatus);
-    } catch (err) {
-      console.warn('Firestore register sync warning:', err);
-    }
-  }
 
   // Set active session
   setActiveSessionUserId(userId);

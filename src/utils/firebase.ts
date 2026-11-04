@@ -11,6 +11,7 @@ import {
   where,
   onSnapshot,
   deleteDoc,
+  runTransaction,
   Unsubscribe,
 } from 'firebase/firestore';
 import {
@@ -119,6 +120,22 @@ export async function firestoreRegisterAccount(
   if (!db) return false;
 
   try {
+    // Never let a cached/stale account claim a username owned by another account
+    const uname = account.username.toLowerCase().trim();
+    const usernameRef = doc(db, 'usernames', uname);
+    const owned = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(usernameRef);
+      if (snap.exists() && snap.data().userId !== account.id) return false;
+      if (!snap.exists()) {
+        tx.set(usernameRef, { userId: account.id, createdAt: new Date().toISOString() });
+      }
+      return true;
+    });
+    if (!owned) {
+      console.warn(`Username "${uname}" belongs to another account; skipping cloud sync.`);
+      return false;
+    }
+
     // Save account
     await setDoc(doc(db, 'accounts', account.id), account);
     // Save settings
@@ -139,12 +156,63 @@ export async function firestoreRegisterAccount(
   }
 }
 
+// Cloud Account: Create with a GUARANTEED-UNIQUE username.
+// Reserves `usernames/{username}` inside a transaction, so two people can never
+// get the same username, even if they register at the same moment.
+export type CreateAccountResult = 'ok' | 'taken' | 'error';
+
+export async function firestoreCreateAccountUnique(
+  account: UserAccount,
+  settings: UserSettings,
+  status: DrinkStatus
+): Promise<CreateAccountResult> {
+  const { db } = initFirebase();
+  if (!db) return 'error';
+
+  const username = account.username.toLowerCase().trim();
+
+  try {
+    // Older accounts were created before username reservations existed
+    const legacy = await getDocs(
+      query(collection(db, 'accounts'), where('username', '==', username))
+    );
+    if (!legacy.empty) return 'taken';
+
+    await runTransaction(db, async (tx) => {
+      const usernameRef = doc(db, 'usernames', username);
+      const snap = await tx.get(usernameRef);
+      if (snap.exists()) {
+        throw new Error('USERNAME_TAKEN');
+      }
+      tx.set(usernameRef, { userId: account.id, createdAt: new Date().toISOString() });
+      tx.set(doc(db, 'accounts', account.id), account);
+      tx.set(doc(db, 'settings', account.id), settings);
+      tx.set(doc(db, 'statuses', account.id), status);
+    });
+    return 'ok';
+  } catch (err) {
+    if (err instanceof Error && err.message === 'USERNAME_TAKEN') return 'taken';
+    console.error('Firestore create account error:', err);
+    return 'error';
+  }
+}
+
 // Cloud Account: Delete Account & related documents
 export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
   const { db } = initFirebase();
   if (!db) return false;
 
   try {
+    // Release the username reservation so it can be used again
+    const accSnap = await getDoc(doc(db, 'accounts', userId));
+    const uname = accSnap.exists() ? String(accSnap.data().username || '').toLowerCase().trim() : '';
+    if (uname) {
+      const resSnap = await getDoc(doc(db, 'usernames', uname));
+      if (resSnap.exists() && resSnap.data().userId === userId) {
+        await deleteDoc(doc(db, 'usernames', uname));
+      }
+    }
+
     await deleteDoc(doc(db, 'accounts', userId));
     await deleteDoc(doc(db, 'settings', userId));
     await deleteDoc(doc(db, 'statuses', userId));
