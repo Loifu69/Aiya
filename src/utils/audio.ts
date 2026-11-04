@@ -248,3 +248,18 @@ export function setupAudioUnlock(): void {
   window.addEventListener('keydown', unlock);
   window.addEventListener('touchstart', unlock);
 }
+
+// Short reminder sound: plays the chosen water sound briefly, then stops by itself
+let reminderStopTimer: number | null = null;
+export function playReminderSound(type: SoundType = 'river', volume = 0.8, durationMs = 5000) {
+  if (reminderStopTimer !== null) {
+    window.clearTimeout(reminderStopTimer);
+    reminderStopTimer = null;
+  }
+  stopWaterSound();
+  playWaterSound(type, volume);
+  reminderStopTimer = window.setTimeout(() => {
+    stopWaterSound();
+    reminderStopTimer = null;
+  }, durationMs);
+}

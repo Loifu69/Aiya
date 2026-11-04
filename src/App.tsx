@@ -46,7 +46,7 @@ import {
 import {
   playNudgeTone,
   playSuccessChime,
-  playWaterSound,
+  playReminderSound,
   stopWaterSound,
 } from './utils/audio';
 
@@ -57,8 +57,6 @@ import { HomePage } from './components/HomePage';
 import { FriendsPage } from './components/FriendsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { HistoryPage } from './components/HistoryPage';
-import { ConfirmModal } from './components/ConfirmModal';
-import { NudgeToast } from './components/NudgeToast';
 import { OnboardingModal } from './components/OnboardingModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import {
@@ -163,7 +161,6 @@ export default function App() {
   // even when the browser throttles timers in background tabs.
   const simOffsetRef = useRef(0);
   const [currentTab, setCurrentTab] = useState<NavTab>(getInitialTab);
-  const [activeNudge, setActiveNudge] = useState<NudgeEvent | null>(null);
   const [lastFeedbackMessage, setLastFeedbackMessage] = useState<string | null>(null);
   const [nudgeSuccessBanner, setNudgeSuccessBanner] = useState<string | null>(null);
   const [isSoundMuted, setIsSoundMuted] = useState(false);
@@ -175,6 +172,10 @@ export default function App() {
 
   // Track if sound is currently ringing for reminder
   const isRingingRef = useRef(false);
+  const isSoundMutedRef = useRef(false);
+  useEffect(() => {
+    isSoundMutedRef.current = isSoundMuted;
+  }, [isSoundMuted]);
 
   // Firestore Realtime Listeners for Cross-Device Synchronization
   useEffect(() => {
@@ -272,8 +273,8 @@ export default function App() {
 
     // 6. Listen to incoming nudges from cloud
     const unsubNudges = firestoreSubscribeNudges(currentUser, (cloudNudge) => {
-      setActiveNudge(cloudNudge);
-      playNudgeTone();
+      // Friend nudge: just a sound + system notification (no popup)
+      if (!isSoundMutedRef.current) playNudgeTone();
       showSystemNotification(
         `${cloudNudge.fromName || 'Temanmu'} mengingatkanmu!`,
         cloudNudge.message || 'Ayo minum air sekarang.',
@@ -416,14 +417,18 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // Check incoming unread nudges for active user
+  // Check incoming unread nudges for active user (local/offline mode)
   useEffect(() => {
     if (!currentUser) return;
     const userNudges = getStoredNudges(currentUser.id);
     const unread = userNudges.find((n) => !n.isRead);
     if (unread) {
-      setActiveNudge(unread);
-      playNudgeTone();
+      if (!isSoundMutedRef.current) playNudgeTone();
+      showSystemNotification(
+        `${unread.fromName || 'Temanmu'} mengingatkanmu!`,
+        unread.message || 'Ayo minum air sekarang.',
+        'aiya-nudge'
+      );
       const updated = userNudges.map((n) =>
         n.id === unread.id ? { ...n, isRead: true } : n
       );
@@ -446,134 +451,53 @@ export default function App() {
     }
   }, []);
 
-  // Check alarm time trigger (Section 5.2, 12.1)
+  const isInQuietHours = useCallback((nowMs: number) => {
+    if (!settings.quietHoursEnabled) return false;
+    const now = new Date(nowMs);
+    const curHM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (settings.quietStart > settings.quietEnd) {
+      return curHM >= settings.quietStart || curHM <= settings.quietEnd;
+    }
+    return curHM >= settings.quietStart && curHM <= settings.quietEnd;
+  }, [settings]);
+
+  // Play a reminder: short sound + system notification. No confirmation popup.
+  const ringReminder = useCallback((nowMs: number) => {
+    const inQuiet = isInQuietHours(nowMs);
+    if (inQuiet) return;
+    if (!isSoundMuted) {
+      playReminderSound(settings.soundType, settings.volume);
+    }
+    showSystemNotification('Aiya: Waktunya Minum!', 'Jangan lupa minum air, lalu tekan "Sudah Minum".', 'aiya-drink');
+  }, [isInQuietHours, isSoundMuted, settings]);
+
+  // Reminder loop: when the reminder time is reached, ring, then repeat every
+  // snoozeMinutes until the user presses "Sudah Minum Sekarang".
+  // dueAt stays the same, so friends see "Terlambat" and can nudge.
   useEffect(() => {
     if (!currentUser) return;
     const nextAlarmMs = new Date(drinkStatus.nextAlarmAt).getTime();
-    if (currentTimeMs >= nextAlarmMs && drinkStatus.reminderState === 'IDLE') {
-      // Check quiet hours if enabled
-      let inQuiet = false;
-      if (settings.quietHoursEnabled) {
-        const now = new Date(currentTimeMs);
-        const curHM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        if (settings.quietStart > settings.quietEnd) {
-          inQuiet = curHM >= settings.quietStart || curHM <= settings.quietEnd;
-        } else {
-          inQuiet = curHM >= settings.quietStart && curHM <= settings.quietEnd;
-        }
-      }
+    if (currentTimeMs < nextAlarmMs) return;
 
-      const updated: DrinkStatus = {
-        ...drinkStatus,
-        reminderState: 'RINGING',
-      };
-      setDrinkStatus(updated);
-      saveStoredDrinkStatus(updated, currentUser.id);
+    ringReminder(currentTimeMs);
 
-      if (!inQuiet && !isSoundMuted) {
-        isRingingRef.current = true;
-        playWaterSound(settings.soundType, settings.volume);
-      }
-
-      // System notification (via Service Worker so it also works on Android & background tabs)
-      if (!inQuiet) {
-        showSystemNotification('Aiya: Waktunya Minum!', 'Waktunya minum. Dengarkan suara airnya.', 'aiya-drink');
-      }
-    }
-  }, [currentUser, currentTimeMs, drinkStatus, settings, isSoundMuted]);
-
-  // Dismiss friend nudge and ensure marked read locally & in Firestore
-  const handleDismissNudge = useCallback(() => {
-    setActiveNudge((curr) => {
-      if (curr) {
-        if (currentUser) {
-          markStoredNudgeAsRead(curr.id, currentUser.id);
-        }
-        if (isFirebaseReady()) {
-          firestoreMarkNudgeAsRead(curr.id).catch(console.error);
-        }
-      }
-      return null;
-    });
-  }, [currentUser]);
-
-  // Handler: "Sudah" (Section 17.1 of PDF)
-  const handleAnswerSudah = useCallback(() => {
-    if (!currentUser) return;
-    handleDismissNudge();
-    stopWaterSound();
-    isRingingRef.current = false;
-    playSuccessChime();
-
-    const nowIso = new Date(currentTimeMs).toISOString();
-    const nextTimeIso = new Date(currentTimeMs + settings.intervalMinutes * 60 * 1000).toISOString();
-
-    const newStatus: DrinkStatus = {
-      userId: currentUser.id,
-      lastDrinkAt: nowIso,
-      dueAt: nextTimeIso,
-      nextAlarmAt: nextTimeIso,
-      reminderState: 'IDLE',
-    };
-
-    setDrinkStatus(newStatus);
-    saveStoredDrinkStatus(newStatus, currentUser.id);
-
-    // Record log
-    const newLog = addStoredLog({
-      userId: currentUser.id,
-      action: 'SUDAH',
-      timestamp: nowIso,
-      note: 'Minum setelah pengingat air berbunyi',
-    }, currentUser.id);
-    setLogs((prev) => [newLog, ...prev]);
-
-    // Copy from Section 22.5
-    const feedback = `Bagus! Pengingat berikutnya jam ${formatTimeHM(nextTimeIso)}.`;
-    setLastFeedbackMessage(feedback);
-  }, [currentTimeMs, currentUser, settings, handleDismissNudge]);
-
-  // Handler: "Belum" (Section 17.2 of PDF)
-  const handleAnswerBelum = useCallback(() => {
-    if (!currentUser) return;
-    handleDismissNudge();
-    stopWaterSound();
-    isRingingRef.current = false;
-
-    const nextAlarmIso = new Date(currentTimeMs + settings.snoozeMinutes * 60 * 1000).toISOString();
-
-    // CRITICAL (Section 6.1 & 17.2): dueAt & lastDrinkAt DO NOT CHANGE!
-    const newStatus: DrinkStatus = {
+    const updated: DrinkStatus = {
       ...drinkStatus,
-      nextAlarmAt: nextAlarmIso,
+      nextAlarmAt: new Date(currentTimeMs + settings.snoozeMinutes * 60 * 1000).toISOString(),
       reminderState: 'IDLE',
     };
+    setDrinkStatus(updated);
+    saveStoredDrinkStatus(updated, currentUser.id);
+  }, [currentUser, currentTimeMs, drinkStatus, settings, ringReminder]);
 
-    setDrinkStatus(newStatus);
-    saveStoredDrinkStatus(newStatus, currentUser.id);
-
-    // Record log
-    const newLog = addStoredLog({
-      userId: currentUser.id,
-      action: 'BELUM',
-      timestamp: new Date(currentTimeMs).toISOString(),
-      note: `Ditunda ${settings.snoozeMinutes} menit`,
-    }, currentUser.id);
-    setLogs((prev) => [newLog, ...prev]);
-
-    // Copy from Section 22.5
-    const feedback = `Oke, Aiya ingatkan lagi ${settings.snoozeMinutes} menit lagi.`;
-    setLastFeedbackMessage(feedback);
-  }, [currentTimeMs, currentUser, drinkStatus, settings, handleDismissNudge]);
-
-  // Handler: Drink Now (outside scheduled alarm - Section 9.2 & 13)
-  const handleDrinkNowOutsideAlarm = useCallback(() => {
+  // Handler: "Sudah Minum Sekarang" -> stops reminders, schedules next drink
+  const handleDrinkNow = useCallback(() => {
     if (!currentUser) return;
-    handleDismissNudge();
     stopWaterSound();
     isRingingRef.current = false;
     playSuccessChime();
 
+    const wasDue = currentTimeMs >= new Date(drinkStatus.dueAt).getTime();
     const nowIso = new Date(currentTimeMs).toISOString();
     const nextTimeIso = new Date(currentTimeMs + settings.intervalMinutes * 60 * 1000).toISOString();
 
@@ -590,31 +514,22 @@ export default function App() {
 
     const newLog = addStoredLog({
       userId: currentUser.id,
-      action: 'MANUAL',
+      action: wasDue ? 'SUDAH' : 'MANUAL',
       timestamp: nowIso,
-      note: 'Minum air secara mandiri di luar alarm',
+      note: wasDue ? 'Minum setelah pengingat berbunyi' : 'Minum sebelum waktu pengingat',
     }, currentUser.id);
     setLogs((prev) => [newLog, ...prev]);
 
     setLastFeedbackMessage(`Minum tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
-  }, [currentTimeMs, currentUser, settings, handleDismissNudge]);
+  }, [currentTimeMs, currentUser, drinkStatus, settings]);
 
-  // Trigger test alarm immediately
+  // Test the reminder sound + notification without changing the schedule
   const handleTriggerAlarmNow = useCallback(() => {
-    if (!currentUser) return;
-    const updated: DrinkStatus = {
-      ...drinkStatus,
-      nextAlarmAt: new Date(currentTimeMs).toISOString(),
-      reminderState: 'RINGING',
-    };
-    setDrinkStatus(updated);
-    saveStoredDrinkStatus(updated, currentUser.id);
-
     if (!isSoundMuted) {
-      isRingingRef.current = true;
-      playWaterSound(settings.soundType, settings.volume);
+      playReminderSound(settings.soundType, settings.volume);
     }
-  }, [currentTimeMs, currentUser, drinkStatus, settings, isSoundMuted]);
+    showSystemNotification('Aiya: Tes Pengingat', 'Seperti inilah pengingat minum akan berbunyi.', 'aiya-test');
+  }, [isSoundMuted, settings]);
 
   // Simulator: fast forward time
   const handleFastForward = useCallback((minutes: number) => {
@@ -903,7 +818,7 @@ export default function App() {
             settings={settings}
             drinkStatus={drinkStatus}
             currentTimeMs={currentTimeMs}
-            onDrinkNow={handleDrinkNowOutsideAlarm}
+            onDrinkNow={handleDrinkNow}
             onTriggerAlarmNow={handleTriggerAlarmNow}
             onFastForward={handleFastForward}
             lastFeedbackMessage={lastFeedbackMessage}
@@ -932,7 +847,7 @@ export default function App() {
         {currentTab === 'history' && (
           <HistoryPage
             logs={logs}
-            onAddManualLog={handleDrinkNowOutsideAlarm}
+            onAddManualLog={handleDrinkNow}
           />
         )}
 
@@ -946,26 +861,6 @@ export default function App() {
           />
         )}
       </main>
-
-      {/* Layar Notifikasi / Konfirmasi (Section 5.3 & 9.3) */}
-      <ConfirmModal
-        isOpen={drinkStatus.reminderState === 'RINGING' || drinkStatus.reminderState === 'CONFIRMING'}
-        reminderState={drinkStatus.reminderState}
-        snoozeMinutes={settings.snoozeMinutes}
-        intervalMinutes={settings.intervalMinutes}
-        onAnswerSudah={handleAnswerSudah}
-        onAnswerBelum={handleAnswerBelum}
-      />
-
-      {/* Friend Nudge Notification (Section 12.2) */}
-      <NudgeToast
-        nudge={activeNudge}
-        onOpenConfirm={() => {
-          handleDismissNudge();
-          handleTriggerAlarmNow();
-        }}
-        onDismiss={handleDismissNudge}
-      />
 
       {/* Onboarding Dialog if not completed */}
       <OnboardingModal

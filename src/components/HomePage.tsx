@@ -33,9 +33,10 @@ export const HomePage: React.FC<HomePageProps> = ({
   lastFeedbackMessage,
   onClearFeedback,
 }) => {
-  const remaining = formatRemainingTime(drinkStatus.nextAlarmAt, currentTimeMs);
-  const nextTimeHM = formatTimeHM(drinkStatus.nextAlarmAt);
+  // Main display follows the drink schedule (dueAt); reminders repeat via nextAlarmAt
+  const remaining = formatRemainingTime(drinkStatus.dueAt, currentTimeMs);
   const dueTimeHM = formatTimeHM(drinkStatus.dueAt);
+  const nextReminderHM = formatTimeHM(drinkStatus.nextAlarmAt);
   const lastDrinkHM = formatTimeHM(drinkStatus.lastDrinkAt);
 
   // Compute hydration percentage for visual glass
@@ -91,22 +92,22 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* Primary Schedule Display as specified in doc Section 9.2 */}
         <div className="mt-4 space-y-1">
           <span className="text-xs font-semibold tracking-wide uppercase text-slate-600">
-            Minum Berikutnya
+            {isAlarmDueOrPast ? 'Waktunya Minum!' : 'Minum Berikutnya'}
           </span>
-          <div className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight tabular-nums">
-            {nextTimeHM}
+          <div className={`text-4xl sm:text-5xl font-extrabold tracking-tight tabular-nums ${isAlarmDueOrPast ? 'text-amber-600' : 'text-slate-900'}`}>
+            {dueTimeHM}
           </div>
-          <div className="text-sm font-medium text-sky-600">
+          <div className={`text-sm font-medium ${isAlarmDueOrPast ? 'text-amber-600' : 'text-sky-600'}`}>
             {remaining.text}
           </div>
         </div>
 
-        {/* Dual time inspection note (dueAt vs nextAlarmAt) */}
-        {drinkStatus.dueAt !== drinkStatus.nextAlarmAt && (
+        {/* Repeating reminder info while overdue */}
+        {isAlarmDueOrPast && (
           <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
             <Clock className="w-3.5 h-3.5" />
             <span>
-              Alarm ditunda hingga {nextTimeHM} (jadwal utama seharusnya {dueTimeHM})
+              Pengingat berbunyi lagi jam {nextReminderHM} (setiap {settings.snoozeMinutes} menit) sampai kamu menekan "Sudah Minum"
             </span>
           </div>
         )}
@@ -127,7 +128,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
           <button
             onClick={onDrinkNow}
-            className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
+            className={`w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98] ${isAlarmDueOrPast ? 'ring-4 ring-amber-300 animate-pulse' : ''}`}
           >
             <Droplets className="w-4 h-4 text-cyan-400" />
             <span>Sudah Minum Sekarang</span>
@@ -138,7 +139,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
           >
             <BellRing className="w-4 h-4 text-sky-600" />
-            <span>Tes Alarm & Suara Air</span>
+            <span>Tes Suara Pengingat</span>
           </button>
         </div>
       </section>
