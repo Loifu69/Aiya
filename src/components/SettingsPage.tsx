@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Settings,
   Volume2,
@@ -23,7 +23,7 @@ import { playWaterSound, stopWaterSound } from '../utils/audio';
 interface SettingsPageProps {
   currentUser: UserAccount;
   settings: UserSettings;
-  onUpdateSettings: (newSettings: Partial<UserSettings>) => { success: boolean; message?: string };
+  onUpdateSettings: (newSettings: Partial<UserSettings>) => Promise<{ success: boolean; message?: string }>;
   onLogout: () => void;
   onDeleteAccount: (password: string) => Promise<{ success: boolean; message: string }>;
 }
@@ -46,7 +46,40 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Floating toast (fixed top-center, fades out)
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const toastTimers = useRef<number[]>([]);
+
+  // Save confirmation dialog
+  const [isSaveConfirmOpen, setIsSaveConfirmOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const showToast = (type: 'success' | 'error', text: string) => {
+    toastTimers.current.forEach((t) => window.clearTimeout(t));
+    setToast({ type, text });
+    setToastVisible(false);
+    // next frame -> fade in
+    toastTimers.current = [
+      window.setTimeout(() => setToastVisible(true), 20),
+      window.setTimeout(() => setToastVisible(false), 3000), // start fade out
+      window.setTimeout(() => setToast(null), 3500), // remove after fade
+    ];
+  };
+
+  useEffect(() => () => toastTimers.current.forEach((t) => window.clearTimeout(t)), []);
+
+  // Keep the form in sync when settings change (e.g. loaded from cloud)
+  useEffect(() => {
+    setName(settings.name);
+    setIntervalMinutes(settings.intervalMinutes);
+    setSnoozeMinutes(settings.snoozeMinutes);
+    setSoundType(settings.soundType);
+    setVolume(settings.volume);
+    setQuietHoursEnabled(settings.quietHoursEnabled);
+    setQuietStart(settings.quietStart);
+    setQuietEnd(settings.quietEnd);
+  }, [settings]);
 
   // Delete Account Confirmation State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -95,65 +128,122 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   };
 
+  const validate = (): string | null => {
+    // Validation according to Section 11 of PDF
+    if (!name.trim()) return 'Nama pengguna tidak boleh kosong';
+    if (!intervalMinutes || intervalMinutes <= 0) return 'Interval minum tidak boleh kosong atau 0';
+    if (intervalMinutes < 15) return 'Batas minimum interval adalah 15 menit';
+    if (intervalMinutes > 720) return 'Batas maksimum interval adalah 12 jam (720 menit)';
+    if (!snoozeMinutes || snoozeMinutes <= 0) return 'Durasi tunda tidak boleh kosong atau 0';
+    if (snoozeMinutes >= intervalMinutes) return 'Durasi tunda harus lebih kecil dari interval minum utama';
+    return null;
+  };
+
+  // Step 1: validate, then ask for confirmation
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    setSaveStatus(null);
-
-    // Validation according to Section 11 of PDF
-    if (!name.trim()) {
-      setSaveStatus({ type: 'error', text: 'Nama pengguna tidak boleh kosong' });
+    const error = validate();
+    if (error) {
+      showToast('error', error);
       return;
     }
+    setIsSaveConfirmOpen(true);
+  };
 
-    if (!intervalMinutes || intervalMinutes <= 0) {
-      setSaveStatus({ type: 'error', text: 'Interval minum tidak boleh kosong atau 0' });
-      return;
-    }
-
-    if (intervalMinutes < 15) {
-      setSaveStatus({ type: 'error', text: 'Batas minimum interval adalah 15 menit' });
-      return;
-    }
-
-    if (intervalMinutes > 720) {
-      setSaveStatus({ type: 'error', text: 'Batas maksimum interval adalah 12 jam (720 menit)' });
-      return;
-    }
-
-    if (!snoozeMinutes || snoozeMinutes <= 0) {
-      setSaveStatus({ type: 'error', text: 'Durasi tunda tidak boleh kosong atau 0' });
-      return;
-    }
-
-    if (snoozeMinutes >= intervalMinutes) {
-      setSaveStatus({
-        type: 'error',
-        text: 'Durasi tunda harus lebih kecil dari interval minum utama',
+  // Step 2: user confirmed -> save locally + cloud
+  const handleConfirmSave = async () => {
+    setIsSaving(true);
+    try {
+      const res = await onUpdateSettings({
+        name: name.trim(),
+        intervalMinutes,
+        snoozeMinutes,
+        soundType,
+        volume,
+        quietHoursEnabled,
+        quietStart,
+        quietEnd,
       });
-      return;
-    }
-
-    const res = onUpdateSettings({
-      name: name.trim(),
-      intervalMinutes,
-      snoozeMinutes,
-      soundType,
-      volume,
-      quietHoursEnabled,
-      quietStart,
-      quietEnd,
-    });
-
-    if (res.success) {
-      setSaveStatus({ type: 'success', text: 'Pengaturan berhasil disimpan!' });
-      setTimeout(() => setSaveStatus(null), 3000);
-    } else {
-      setSaveStatus({ type: 'error', text: res.message || 'Gagal menyimpan pengaturan' });
+      setIsSaveConfirmOpen(false);
+      if (res.success) {
+        showToast('success', 'Perubahan telah disimpan');
+      } else {
+        showToast('error', res.message || 'Gagal menyimpan pengaturan');
+      }
+    } catch {
+      setIsSaveConfirmOpen(false);
+      showToast('error', 'Terjadi kesalahan saat menyimpan pengaturan');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
     <div className="space-y-6 max-w-xl mx-auto pb-20 md:pb-8">
+      {/* Floating toast: fixed at top-center, stays visible while scrolling, then fades out */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-2xl shadow-lg text-xs sm:text-sm font-semibold flex items-center gap-2 pointer-events-none transition-all duration-500 ${
+            toastVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'
+          } ${
+            toast.type === 'error'
+              ? 'bg-rose-600 text-white shadow-rose-600/30'
+              : 'bg-emerald-600 text-white shadow-emerald-600/30'
+          }`}
+        >
+          {toast.type === 'error' ? (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          ) : (
+            <Check className="w-4 h-4 shrink-0" />
+          )}
+          <span>{toast.text}</span>
+        </div>
+      )}
+
+      {/* Save confirmation dialog */}
+      {isSaveConfirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="save-confirm-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in"
+        >
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-sky-100 space-y-4 text-center">
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-sky-100 flex items-center justify-center text-sky-600">
+              <Save className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 id="save-confirm-title" className="text-base font-bold text-slate-900">
+                Apakah kamu yakin?
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Pengaturan baru akan disimpan dan langsung dipakai untuk pengingat minummu.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsSaveConfirmOpen(false)}
+                disabled={isSaving}
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSave}
+                disabled={isSaving}
+                className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? 'Menyimpan...' : 'Ya, Simpan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs">
         <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
           <Settings className="w-5 h-5 text-sky-600" />
@@ -163,18 +253,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           Sesuaikan ritme pengingat, durasi tunda, dan preferensi suara air.
         </p>
 
-        {saveStatus && (
-          <div
-            className={`mt-4 p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
-              saveStatus.type === 'error'
-                ? 'bg-rose-50 border border-rose-200 text-rose-800'
-                : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-            }`}
-          >
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{saveStatus.text}</span>
-          </div>
-        )}
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">

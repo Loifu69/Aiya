@@ -284,6 +284,33 @@ export async function firestoreGetAllAccounts(): Promise<UserAccount[]> {
   }
 }
 
+// Cloud Settings: Save & Load
+export async function firestoreSaveSettings(userId: string, settings: UserSettings): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    await setDoc(doc(db, 'settings', userId), { ...settings, userId }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error('Firestore save settings error:', err);
+    return false;
+  }
+}
+
+export async function firestoreGetSettings(userId: string): Promise<UserSettings | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const snap = await getDoc(doc(db, 'settings', userId));
+    return snap.exists() ? (snap.data() as UserSettings) : null;
+  } catch (err) {
+    console.error('Firestore get settings error:', err);
+    return null;
+  }
+}
+
 // Cloud Drink Status: Save & Realtime Listen
 export async function firestoreSaveDrinkStatus(
   userId: string,

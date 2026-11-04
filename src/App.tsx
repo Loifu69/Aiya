@@ -78,6 +78,8 @@ import {
   firestoreSubscribeFriendsLive,
   firestoreMigrateLegacyFriends,
   firestoreRemoveFriendship,
+  firestoreSaveSettings,
+  firestoreGetSettings,
   isFirebaseReady,
 } from './utils/firebase';
 
@@ -205,6 +207,15 @@ export default function App() {
           setCurrentUser(cloudMe);
           setActiveSessionUserId(cloudMe.id);
         }
+      }
+    }).catch(() => {});
+
+    // 2b. Load settings from cloud so changes made on another device apply here
+    firestoreGetSettings(currentUser.id).then((cloudSettings) => {
+      if (cloudSettings) {
+        const merged = { ...getStoredSettings(currentUser.id), ...cloudSettings, userId: currentUser.id };
+        setSettings(merged);
+        saveStoredSettings(merged, currentUser.id);
       }
     }).catch(() => {});
 
@@ -776,9 +787,17 @@ export default function App() {
   }, [currentUser, friends]);
 
   // Update Settings
-  const handleUpdateSettings = useCallback((newPartial: Partial<UserSettings>) => {
-    if (!currentUser) return { success: false };
-    const updated = { ...settings, ...newPartial };
+  const handleUpdateSettings = useCallback(async (newPartial: Partial<UserSettings>): Promise<{ success: boolean; message?: string }> => {
+    if (!currentUser) return { success: false, message: 'Harap masuk terlebih dahulu' };
+    const updated: UserSettings = { ...settings, ...newPartial, userId: currentUser.id };
+
+    if (isFirebaseReady()) {
+      const ok = await firestoreSaveSettings(currentUser.id, updated);
+      if (!ok) {
+        return { success: false, message: 'Gagal menyimpan ke database cloud. Periksa koneksi lalu coba lagi.' };
+      }
+    }
+
     setSettings(updated);
     saveStoredSettings(updated, currentUser.id);
     return { success: true };
