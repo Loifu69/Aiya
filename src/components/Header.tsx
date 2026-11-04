@@ -45,7 +45,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <div className="flex flex-col leading-tight">
               <span className="font-bold text-slate-800">{currentUser.name}</span>
-              <span className="text-[10px] text-slate-400 hidden sm:inline">{currentUser.userCode}</span>
+              <span className="text-[10px] text-slate-400 hidden sm:inline">@{currentUser.username}</span>
             </div>
           </div>
 

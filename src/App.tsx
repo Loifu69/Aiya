@@ -17,7 +17,6 @@ import {
   acceptFriendRequest,
   addStoredLog,
   computeFriendStatus,
-  DEFAULT_USER,
   deliverNudgeToUser,
   formatTimeHM,
   getActiveUser,
@@ -635,7 +634,7 @@ export default function App() {
   // Send Friend Request (Section 10.4: Two-Way Approval)
   const handleSendFriendRequest = useCallback(async (identifier: string): Promise<{ success: boolean; message: string }> => {
     if (!currentUser) return { success: false, message: 'Harap masuk terlebih dahulu' };
-    const cleaned = identifier.trim().toLowerCase();
+    const cleaned = identifier.trim().replace(/^@/, '').toLowerCase();
 
     // Check self
     if (
@@ -785,31 +784,6 @@ export default function App() {
     return { success: true };
   }, [currentUser, settings]);
 
-  // Reset to initial document scenario
-  const handleResetToDemoScenario = useCallback(() => {
-    if (!currentUser) return;
-    stopWaterSound();
-    isRingingRef.current = false;
-
-    const defaultUser = { ...DEFAULT_USER, userId: currentUser.id, name: currentUser.name, userCode: currentUser.userCode };
-    const nextTime = new Date(currentTimeMs + defaultUser.intervalMinutes * 60 * 1000).toISOString();
-    const defaultStatus: DrinkStatus = {
-      userId: currentUser.id,
-      lastDrinkAt: new Date(currentTimeMs - 10 * 60 * 1000).toISOString(),
-      dueAt: nextTime,
-      nextAlarmAt: nextTime,
-      reminderState: 'IDLE',
-    };
-
-    setSettings(defaultUser);
-    setDrinkStatus(defaultStatus);
-    saveStoredSettings(defaultUser, currentUser.id);
-    saveStoredDrinkStatus(defaultStatus, currentUser.id);
-
-    setLastFeedbackMessage('Data berhasil di-reset!');
-    setTimeout(() => setLastFeedbackMessage(null), 3000);
-  }, [currentTimeMs, currentUser]);
-
   // Complete onboarding
   const handleCompleteOnboarding = (data: { name: string; intervalMinutes: number; snoozeMinutes: number }) => {
     if (!currentUser) return;
@@ -923,9 +897,7 @@ export default function App() {
             currentUser={currentUser}
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
-            onResetToDemoScenario={handleResetToDemoScenario}
             onLogout={handleLogout}
-            onOpenCloudSync={() => setIsCloudSyncOpen(true)}
             onDeleteAccount={handleDeleteAccount}
           />
         )}

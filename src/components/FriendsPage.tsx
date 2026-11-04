@@ -23,6 +23,7 @@ import {
   formatRemainingTime,
   formatTimeHM,
   NUDGE_COOLDOWN_MS,
+  toFriendCode,
 } from '../utils/storage';
 
 interface FriendsPageProps {
@@ -229,7 +230,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                             {friend.name}
                           </span>
                           <span className="text-xs text-slate-600 font-mono">
-                            {friend.userCode}
+                            @{toFriendCode(friend.userCode)}
                           </span>
                           {friend.isMuted && (
                             <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-medium">
@@ -416,7 +417,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                             {targetUser?.name || 'Pengguna Aiya'}
                           </span>
                           <span className="text-slate-400 ml-1.5 font-mono text-[11px]">
-                            {targetUser?.userCode}
+                            {targetUser ? `@${targetUser.username}` : ''}
                           </span>
                         </div>
                       </div>
@@ -455,7 +456,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                   <input
                     id="friendIdentifier"
                     type="text"
-                    placeholder="Username atau kode teman (misal: AIYA-XXXX)"
+                    placeholder="Masukkan username teman (misal: loifu)"
                     value={friendInput}
                     onChange={(e) => setFriendInput(e.target.value)}
                     className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:border-sky-500 focus:bg-white transition-all font-mono"
@@ -530,9 +531,6 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                             @{account.username}
                           </span>
                         </div>
-                        <span className="text-[10px] text-slate-600 font-mono block">
-                          {account.userCode}
-                        </span>
                       </div>
                     </div>
 

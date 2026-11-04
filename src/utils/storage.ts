@@ -25,6 +25,11 @@ const STORAGE_KEYS = {
 // Grace period for "Waktunya minum" vs "Terlambat" (5 minutes)
 export const GRACE_PERIOD_MS = 5 * 60 * 1000;
 // Nudge cooldown (15 minutes)
+// Friend code shown to users is just the username (old codes were "AIYA-USERNAME")
+export function toFriendCode(code?: string | null): string {
+  return (code || '').replace(/^AIYA-/i, '').toLowerCase();
+}
+
 export const NUDGE_COOLDOWN_MS = 15 * 60 * 1000;
 
 // Demo accounts have been removed. These old IDs are purged from browsers that still have them cached.
@@ -137,7 +142,7 @@ export async function registerAccount(
 
   const userId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const displayName = username.charAt(0).toUpperCase() + username.slice(1);
-  const userCode = `AIYA-${username.toUpperCase()}`;
+  const userCode = username; // friend code is simply the username
 
   const newAccount: UserAccount = {
     id: userId,
