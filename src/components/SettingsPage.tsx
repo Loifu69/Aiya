@@ -23,6 +23,7 @@ import { playWaterSound, stopWaterSound } from '../utils/audio';
 import { BackgroundReminderCard } from './BackgroundReminderCard';
 import { ThemeCard } from './ThemeCard';
 import { RingtoneOption } from './RingtoneOption';
+import { ChangePasswordCard } from './ChangePasswordCard';
 
 interface SettingsPageProps {
   currentUser: UserAccount;
@@ -44,6 +45,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [snoozeMinutes, setSnoozeMinutes] = useState(settings.snoozeMinutes);
   const [dailyTargetMl, setDailyTargetMl] = useState(settings.dailyTargetMl);
   const [glassMl, setGlassMl] = useState(settings.glassMl);
+  const [stopWhenTargetReached, setStopWhenTargetReached] = useState(Boolean(settings.stopWhenTargetReached));
   const [soundType, setSoundType] = useState<SoundType>(settings.soundType);
   const [volume, setVolume] = useState(settings.volume);
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(settings.quietHoursEnabled);
@@ -82,6 +84,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setSnoozeMinutes(settings.snoozeMinutes);
     setDailyTargetMl(settings.dailyTargetMl);
     setGlassMl(settings.glassMl);
+    setStopWhenTargetReached(Boolean(settings.stopWhenTargetReached));
     setSoundType(settings.soundType);
     setVolume(settings.volume);
     setQuietHoursEnabled(settings.quietHoursEnabled);
@@ -173,6 +176,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         snoozeMinutes,
         dailyTargetMl,
         glassMl,
+        stopWhenTargetReached,
         soundType,
         volume,
         quietHoursEnabled,
@@ -421,6 +425,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </p>
             )}
           </div>
+
+          {/* Stop reminding once the daily target is reached */}
+          <label className="pt-3 border-t border-slate-100 flex items-start justify-between gap-3 cursor-pointer">
+            <span>
+              <span className="block text-xs font-semibold text-slate-700">Berhenti mengingatkan kalau target tercapai</span>
+              <span className="block text-[11px] text-slate-500 mt-0.5">
+                Setelah minum {dailyTargetMl.toLocaleString('id-ID')} ml hari ini, pengingat diam sampai besok.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={stopWhenTargetReached}
+              onChange={(e) => setStopWhenTargetReached(e.target.checked)}
+              className="mt-1 w-4 h-4 accent-sky-600 shrink-0"
+            />
+          </label>
         </div>
 
         {/* Section: Interval & Snooze */}
@@ -675,6 +695,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Change password */}
+      <ChangePasswordCard userId={currentUser.id} />
 
       {/* Danger Zone: Delete Account */}
       <div className="bg-rose-50/60 rounded-3xl p-6 border border-rose-200/80 shadow-xs space-y-3">

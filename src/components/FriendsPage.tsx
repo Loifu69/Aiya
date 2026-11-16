@@ -24,6 +24,7 @@ import {
   formatTimeHM,
   NUDGE_COOLDOWN_MS,
   toFriendCode,
+  localDayKey,
 } from '../utils/storage';
 
 interface FriendsPageProps {
@@ -104,9 +105,6 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
       setAddFeedback({ type: 'error', text: res.message });
     }
   };
-
-  // Other accounts that can be added
-  const otherAccounts = allAccounts.filter((a) => a.id !== currentUser.id);
 
   return (
     <div className="space-y-6 pb-20 md:pb-8">
@@ -273,6 +271,30 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                             </span>
                           )}
                         </div>
+
+                        {/* Friend's progress today */}
+                        {(() => {
+                          const target = friend.targetMl || 0;
+                          if (!target) return null;
+                          const ml = friend.intakeDate === localDayKey(currentTimeMs) ? friend.intakeMl || 0 : 0;
+                          const pct = Math.min(100, Math.round((ml / target) * 100));
+                          return (
+                            <div className="mt-2 max-w-xs">
+                              <div className="flex justify-between text-[11px] text-slate-500 mb-1">
+                                <span>Hari ini</span>
+                                <span className="tabular-nums font-semibold text-slate-700">
+                                  {ml.toLocaleString('id-ID')} / {target.toLocaleString('id-ID')} ml
+                                </span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${ml >= target ? 'bg-emerald-500' : 'bg-gradient-to-r from-sky-400 to-cyan-400'}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -416,10 +438,10 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                         <Hourglass className="w-4 h-4 text-amber-500 shrink-0" />
                         <div>
                           <span className="font-semibold text-slate-800">
-                            {targetUser?.name || 'Pengguna Aiya'}
+                            {req.toName || targetUser?.name || 'Pengguna Aiya'}
                           </span>
                           <span className="text-slate-400 ml-1.5 font-mono text-[11px]">
-                            {targetUser ? `@${targetUser.username}` : ''}
+                            {req.toUsername ? `@${req.toUsername}` : targetUser ? `@${targetUser.username}` : ''}
                           </span>
                         </div>
                       </div>
@@ -491,85 +513,6 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
                 <span>Kirim Permintaan Pertemanan</span>
               </button>
             </form>
-          </div>
-
-          {/* List of Registered Users */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 border border-white/80 shadow-lg shadow-sky-100/60">
-            <div className="flex items-center gap-2 mb-1">
-              <Sparkles className="w-4 h-4 text-sky-600" />
-              <h2 className="text-sm font-bold text-slate-900">
-                Pengguna Terdaftar di Aiya
-              </h2>
-            </div>
-            <p className="text-xs text-slate-500 mb-4">
-              Klik &quot;Kirim Permintaan&quot; untuk mengirim permintaan pertemanan ke akun lain.
-            </p>
-
-            <div className="divide-y divide-slate-100">
-              {otherAccounts.map((account) => {
-                const isFriend = friends.some((f) => f.id === account.id);
-                const hasSentRequest = outgoingRequests.some((r) => r.toUserId === account.id);
-                const hasIncomingRequest = friendRequests.find((r) => r.fromUserId === account.id);
-
-                return (
-                  <div
-                    key={account.id}
-                    className="py-3 flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full overflow-hidden bg-sky-100 border border-slate-200 shrink-0">
-                        <img
-                          src={account.avatar}
-                          alt={account.name}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-xs text-slate-900">
-                            {account.name}
-                          </span>
-                          <span className="text-[10px] text-slate-600 font-mono">
-                            @{account.username}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      {isFriend ? (
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          <span>Sudah Berteman</span>
-                        </span>
-                      ) : hasIncomingRequest ? (
-                        <button
-                          type="button"
-                          onClick={() => onAcceptRequest(hasIncomingRequest.id)}
-                          className="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-xs cursor-pointer"
-                        >
-                          Terima Permintaan
-                        </button>
-                      ) : hasSentRequest ? (
-                        <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold flex items-center gap-1">
-                          <Hourglass className="w-3 h-3 text-amber-600" />
-                          <span>Menunggu Persetujuan</span>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleQuickSend(account.username)}
-                          className="px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
-                        >
-                          <UserPlus className="w-3.5 h-3.5" />
-                          <span>Kirim Permintaan</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
 
           {/* Two-way approval rule */}

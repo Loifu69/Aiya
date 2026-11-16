@@ -9,63 +9,23 @@ import {
   UserSettings,
 } from '../types';
 import {
+  currentIdToken,
+  firebaseSignOut,
   firestoreAddLog,
-  firestoreCreateAccountUnique,
-  firestoreDeleteAccount,
-  firestoreGetCredential,
-  firestoreGetLoginRecord,
+  firestoreDeleteLog,
   firestoreSaveDrinkStatus,
   firestoreUpdateNextAlarm,
   isFirebaseReady,
   MAX_LOGS,
   sanitizeAccount,
+  signInWithServerToken,
 } from './firebase';
-import { createCredential, PasswordCredential, verifyCredential } from './password';
 
 const STORAGE_KEYS = {
   ACCOUNTS: 'aiya_accounts_db_v2',
   ACTIVE_USER_ID: 'aiya_active_session_v2',
-  CREDENTIALS: 'aiya_credentials_v1',
+  OLD_CREDENTIALS: 'aiya_credentials_v1', // no longer used; removed on next start
 };
-
-// ----------------- LOCAL PASSWORD CREDENTIALS (hashed) -----------------
-
-function getLocalCredentials(): Record<string, PasswordCredential> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.CREDENTIALS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') return parsed;
-    }
-  } catch {
-    // fallback
-  }
-  return {};
-}
-
-function getLocalCredential(userId: string): PasswordCredential | null {
-  return getLocalCredentials()[userId] || null;
-}
-
-function saveLocalCredential(cred: PasswordCredential): void {
-  try {
-    const all = getLocalCredentials();
-    all[cred.userId] = cred;
-    localStorage.setItem(STORAGE_KEYS.CREDENTIALS, JSON.stringify(all));
-  } catch {
-    // ignore
-  }
-}
-
-function removeLocalCredential(userId: string): void {
-  try {
-    const all = getLocalCredentials();
-    delete all[userId];
-    localStorage.setItem(STORAGE_KEYS.CREDENTIALS, JSON.stringify(all));
-  } catch {
-    // ignore
-  }
-}
 
 // Grace period for "Waktunya minum" vs "Terlambat" (5 minutes)
 export const GRACE_PERIOD_MS = 5 * 60 * 1000;
@@ -98,6 +58,7 @@ export const DEFAULT_USER: UserSettings = {
   snoozeMinutes: 10,    // 10 minutes
   dailyTargetMl: DEFAULT_DAILY_TARGET_ML,
   glassMl: DEFAULT_GLASS_ML,
+  stopWhenTargetReached: false,
   soundType: 'river',
   volume: 0.8,
   quietHoursEnabled: false,
@@ -122,13 +83,8 @@ export function getStoredAccounts(): UserAccount[] {
             return keep;
           })
           .map((a) => {
-            // Old caches stored the plain-text password: hash it and drop it
-            if (typeof a.password === 'string') {
-              changed = true;
-              if (a.password && !getLocalCredential(a.id)) {
-                saveLocalCredential(createCredential(a.id, a.password));
-              }
-            }
+            // Old caches stored the plain-text password: drop it
+            if (typeof a.password === 'string') changed = true;
             return sanitizeAccount(a);
           });
         if (changed) {
@@ -178,110 +134,65 @@ export function getActiveUser(): UserAccount | null {
   return accounts.find((acc) => acc.id === activeId) || null;
 }
 
+// ----------------- SERVER ACCOUNT API (api/auth.ts) -----------------
+
+type AuthResponse = { ok: boolean; message?: string; token?: string; account?: UserAccount };
+
+async function callAuthApi(body: Record<string, unknown>, withSession = false): Promise<AuthResponse> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (withSession) {
+    const idToken = await currentIdToken();
+    if (!idToken) return { ok: false, message: 'Sesi berakhir. Silakan keluar lalu masuk lagi.' };
+    headers.Authorization = `Bearer ${idToken}`;
+  }
+  try {
+    const res = await fetch('/api/auth', { method: 'POST', headers, body: JSON.stringify(body) });
+    const json = (await res.json().catch(() => ({}))) as AuthResponse;
+    return { ...json, ok: res.ok && json.ok === true };
+  } catch {
+    return { ok: false, message: 'Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.' };
+  }
+}
+
+// Signs in to Firebase with the server's token and remembers the account on this device
+async function startSession(res: AuthResponse): Promise<{ success: boolean; message: string; user?: UserAccount }> {
+  if (!res.ok || !res.token || !res.account) {
+    return { success: false, message: res.message || 'Terjadi kesalahan. Coba lagi.' };
+  }
+  try {
+    await signInWithServerToken(res.token);
+  } catch (err) {
+    console.error('Firebase sign-in error:', err);
+    return { success: false, message: 'Gagal masuk ke database. Coba lagi sebentar.' };
+  }
+  const user = sanitizeAccount(res.account);
+  saveStoredAccounts([...getStoredAccounts().filter((a) => a.id !== user.id), user]);
+  setActiveSessionUserId(user.id);
+  return { success: true, message: res.message || `Selamat datang, ${user.name}!`, user };
+}
+
 export async function registerAccount(
   usernameRaw: string,
   passwordRaw: string
 ): Promise<{ success: boolean; message: string; user?: UserAccount }> {
   const username = usernameRaw.trim().toLowerCase();
   const password = passwordRaw.trim();
+  // Quick checks before calling the server (the server checks again)
+  if (!username) return { success: false, message: 'Username tidak boleh kosong' };
+  if (username.length < 3) return { success: false, message: 'Username minimal 3 karakter' };
+  if (!/^[a-z0-9_]+$/.test(username)) return { success: false, message: 'Username hanya boleh huruf, angka, dan underscore (_)' };
+  if (!password) return { success: false, message: 'Password tidak boleh kosong' };
+  if (password.length < 3) return { success: false, message: 'Password minimal 3 karakter' };
 
-  if (!username) {
-    return { success: false, message: 'Username tidak boleh kosong' };
+  const result = await startSession(await callAuthApi({ action: 'register', username, password }));
+  if (result.success && result.user) {
+    // New account starts with defaults (and the onboarding questions) until the cloud copy arrives
+    const uid = result.user.id;
+    saveStoredSettings({ ...getStoredSettings(uid), name: result.user.name, userCode: result.user.userCode, isOnboarded: false }, uid);
+    saveStoredFriends([], uid);
+    saveStoredRequests([], uid);
   }
-  if (username.length < 3) {
-    return { success: false, message: 'Username minimal 3 karakter' };
-  }
-  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-    return { success: false, message: 'Username hanya boleh huruf, angka, dan underscore (_)' };
-  }
-  if (!password) {
-    return { success: false, message: 'Password tidak boleh kosong' };
-  }
-  if (password.length < 3) {
-    return { success: false, message: 'Password minimal 3 karakter' };
-  }
-
-  const accounts = getStoredAccounts();
-  const existing = accounts.find((a) => a.username.toLowerCase() === username);
-  if (existing) {
-    return { success: false, message: 'Username telah digunakan' };
-  }
-
-  const userId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-  const displayName = username.charAt(0).toUpperCase() + username.slice(1);
-  const userCode = username; // friend code is simply the username
-
-  const newAccount: UserAccount = {
-    id: userId,
-    username,
-    name: displayName,
-    userCode,
-    avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`,
-    createdAt: new Date().toISOString(),
-  };
-
-  // Initialize Default Settings for this user
-  const newSettings: UserSettings = {
-    userId,
-    name: displayName,
-    userCode,
-    intervalMinutes: 180,
-    snoozeMinutes: 10,
-    dailyTargetMl: DEFAULT_DAILY_TARGET_ML,
-    glassMl: DEFAULT_GLASS_ML,
-    soundType: 'river',
-    volume: 0.8,
-    quietHoursEnabled: false,
-    quietStart: '22:00',
-    quietEnd: '07:00',
-    isOnboarded: true,
-  };
-
-  // Initialize Default Drink Status
-  const now = Date.now();
-  const nextTime = new Date(now + 180 * 60 * 1000).toISOString();
-  const initialStatus: DrinkStatus = {
-    userId,
-    lastDrinkAt: new Date(now - 15 * 60 * 1000).toISOString(),
-    dueAt: nextTime,
-    nextAlarmAt: nextTime,
-  };
-
-  const credential = createCredential(userId, password);
-
-  // Create in cloud FIRST with a unique username reservation.
-  // If the cloud is unreachable, do NOT create a local-only account (it would be invisible to friends).
-  if (isFirebaseReady()) {
-    const result = await firestoreCreateAccountUnique(newAccount, newSettings, initialStatus, credential);
-    if (result === 'taken') {
-      return { success: false, message: 'Username telah digunakan' };
-    }
-    if (result === 'error') {
-      return {
-        success: false,
-        message: 'Gagal terhubung ke database cloud. Periksa koneksi internet lalu coba lagi.',
-      };
-    }
-  }
-
-  // Save locally only after the cloud accepted the account
-  saveStoredAccounts([...accounts, newAccount]);
-  saveLocalCredential(credential);
-  saveStoredSettings(newSettings, userId);
-  saveStoredDrinkStatus(initialStatus, userId);
-
-  // New user starts with EMPTY friend list and requests (must be approved two-way!)
-  saveStoredFriends([], userId);
-  saveStoredRequests([], userId);
-
-  // Set active session
-  setActiveSessionUserId(userId);
-
-  return {
-    success: true,
-    message: `Pendaftaran berhasil! Selamat datang, ${displayName}.`,
-    user: newAccount,
-  };
+  return result;
 }
 
 export async function loginAccount(
@@ -290,106 +201,60 @@ export async function loginAccount(
 ): Promise<{ success: boolean; message: string; user?: UserAccount }> {
   const username = usernameRaw.trim().toLowerCase();
   const password = passwordRaw.trim();
-
-  if (!username || !password) {
-    return { success: false, message: 'Masukkan username dan password.' };
-  }
-
-  // 1. Check local cache (hashed credential saved on this device)
-  const accounts = getStoredAccounts();
-  const local = accounts.find((a) => a.username.toLowerCase() === username);
-  let user = local && verifyCredential(getLocalCredential(local.id), password) ? local : undefined;
-
-  // 2. Otherwise check the cloud (also moves old plain-text passwords to hashed credentials)
-  if (!user && isFirebaseReady()) {
-    try {
-      const record = await firestoreGetLoginRecord(username);
-      if (record && record.credential && verifyCredential(record.credential, password)) {
-        user = record.account;
-        saveLocalCredential(record.credential);
-        saveStoredAccounts([...accounts.filter((a) => a.id !== record.account.id), record.account]);
-      }
-    } catch (err) {
-      console.warn('Firestore login check warning:', err);
-    }
-  }
-
-  if (!user) {
-    return { success: false, message: 'Username atau password salah.' };
-  }
-
-  setActiveSessionUserId(user.id);
-  return {
-    success: true,
-    message: `Selamat datang kembali, ${user.name}!`,
-    user,
-  };
+  if (!username || !password) return { success: false, message: 'Masukkan username dan password.' };
+  return startSession(await callAuthApi({ action: 'login', username, password }));
 }
 
 export function logoutUser(): void {
   setActiveSessionUserId(null);
+  firebaseSignOut().catch(() => {});
 }
 
+// Change password: the server checks the current one and stores the new hash.
+export async function changePassword(
+  _userId: string,
+  currentPasswordRaw: string,
+  newPasswordRaw: string
+): Promise<{ success: boolean; message: string }> {
+  const current = currentPasswordRaw.trim();
+  const next = newPasswordRaw.trim();
+  if (!current || !next) return { success: false, message: 'Isi password lama dan password baru.' };
+  if (next.length < 3) return { success: false, message: 'Password baru minimal 3 karakter.' };
+  if (next === current) return { success: false, message: 'Password baru tidak boleh sama dengan yang lama.' };
+  const res = await callAuthApi({ action: 'change-password', currentPassword: current, newPassword: next }, true);
+  return { success: res.ok, message: res.message || (res.ok ? 'Password berhasil diganti.' : 'Gagal mengganti password.') };
+}
+
+// Delete account: the server checks the password and removes everything (cloud + sign-in).
 export async function deleteAccount(
   userId: string,
   passwordConfirm: string
 ): Promise<{ success: boolean; message: string }> {
-  const accounts = getStoredAccounts();
-  const account = accounts.find((a) => a.id === userId);
-
-  if (!account) {
-    return { success: false, message: 'Akun tidak ditemukan.' };
-  }
-
   const pw = passwordConfirm.trim();
-  let passwordOk = verifyCredential(getLocalCredential(userId), pw);
-  if (!passwordOk && isFirebaseReady()) {
-    passwordOk = verifyCredential(await firestoreGetCredential(userId), pw);
-  }
-  if (!passwordOk) {
-    return { success: false, message: 'Password salah. Konfirmasi penghapusan gagal.' };
-  }
+  if (!pw) return { success: false, message: 'Masukkan password untuk konfirmasi' };
+  const res = await callAuthApi({ action: 'delete-account', password: pw }, true);
+  if (!res.ok) return { success: false, message: res.message || 'Gagal menghapus akun.' };
 
-  // 1. Remove from all friends' lists (mutual cleanup)
-  const myFriends = getStoredFriends(userId);
-  for (const f of myFriends) {
-    removeMutualFriendship(userId, f.id);
-  }
-
-  // 2. Remove all personal keys from localStorage
+  // Clean up this device
   try {
-    localStorage.removeItem(`aiya_settings_${userId}`);
-    localStorage.removeItem(`aiya_status_${userId}`);
-    localStorage.removeItem(`aiya_friends_${userId}`);
-    localStorage.removeItem(`aiya_requests_${userId}`);
-    localStorage.removeItem(`aiya_logs_${userId}`);
-    localStorage.removeItem(`aiya_nudges_${userId}`);
+    for (const key of ['settings', 'status', 'friends', 'requests', 'logs', 'nudges', 'pending_logs']) {
+      localStorage.removeItem(`aiya_${key}_${userId}`);
+    }
   } catch {
     // ignore
   }
-
-  removeLocalCredential(userId);
-
-  // 3. Remove from accounts list
-  const remainingAccounts = accounts.filter((a) => a.id !== userId);
-  saveStoredAccounts(remainingAccounts);
-
-  // 4. Delete from Firestore if connected
-  if (isFirebaseReady()) {
-    try {
-      await firestoreDeleteAccount(userId);
-    } catch (err) {
-      console.warn('Firestore delete account notice:', err);
-    }
-  }
-
-  // 5. Clear active session
+  saveStoredAccounts(getStoredAccounts().filter((a) => a.id !== userId));
   logoutUser();
+  return { success: true, message: res.message || 'Akun berhasil dihapus permanen.' };
+}
 
-  return {
-    success: true,
-    message: `Akun @${account.username} berhasil dihapus permanen.`,
-  };
+// Old builds kept a local copy of password hashes; not needed any more
+export function removeOldLocalData(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.OLD_CREDENTIALS);
+  } catch {
+    // ignore
+  }
 }
 
 // ----------------- PER-USER DATA STORAGE -----------------
@@ -407,6 +272,7 @@ export function getStoredSettings(targetUserId?: string): UserSettings {
     snoozeMinutes: 10,
     dailyTargetMl: DEFAULT_DAILY_TARGET_ML,
     glassMl: DEFAULT_GLASS_ML,
+    stopWhenTargetReached: false,
     soundType: 'river',
     volume: 0.8,
     quietHoursEnabled: false,
@@ -519,20 +385,66 @@ export function mergeLogs(a: DrinkLog[], b: DrinkLog[]): DrinkLog[] {
     .slice(0, MAX_LOGS);
 }
 
+// Local calendar day, e.g. '2026-11-16'
+export function localDayKey(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Logs created on this device that the cloud hasn't confirmed yet. Only these may be
+// uploaded again later; anything else missing from the cloud was deleted on another device.
+const pendingKey = (uid: string) => `aiya_pending_logs_${uid}`;
+
+export function getPendingLogIds(uid: string): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(pendingKey(uid)) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function setPendingLogIds(uid: string, ids: Set<string>): void {
+  try {
+    localStorage.setItem(pendingKey(uid), JSON.stringify([...ids]));
+  } catch {
+    // ignore
+  }
+}
+
+export async function uploadPendingLog(log: DrinkLog, uid: string): Promise<void> {
+  if (!isFirebaseReady()) return;
+  if (await firestoreAddLog(log)) {
+    const ids = getPendingLogIds(uid);
+    ids.delete(log.id);
+    setPendingLogIds(uid, ids);
+  }
+}
+
 export function addStoredLog(log: Omit<DrinkLog, 'id'>, targetUserId?: string): DrinkLog {
   const uid = targetUserId || log.userId || getActiveSessionUserId() || 'user-001';
   const newLog: DrinkLog = {
     ...log,
     userId: uid,
+    dayKey: localDayKey(new Date(log.timestamp).getTime()),
     id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
   };
   saveStoredLogs([newLog, ...getStoredLogs(uid)], uid);
 
   // Sync to cloud so history follows the user across devices
-  if (isFirebaseReady()) {
-    firestoreAddLog(newLog).catch(() => {});
-  }
+  const pending = getPendingLogIds(uid);
+  pending.add(newLog.id);
+  setPendingLogIds(uid, pending);
+  uploadPendingLog(newLog, uid).catch(() => {});
   return newLog;
+}
+
+// Remove one drink entry (this device + cloud)
+export async function deleteStoredLog(logId: string, uid: string): Promise<boolean> {
+  saveStoredLogs(getStoredLogs(uid).filter((l) => l.id !== logId), uid);
+  const pending = getPendingLogIds(uid);
+  if (pending.delete(logId)) setPendingLogIds(uid, pending);
+  if (!isFirebaseReady()) return true;
+  return firestoreDeleteLog(logId);
 }
 
 function isSameLocalDay(aMs: number, bMs: number): boolean {
@@ -724,6 +636,7 @@ export function sendFriendRequest(
     fromAvatar: fromUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${fromUser.username}`,
     toUserId: targetAccount.id,
     toUsername: targetAccount.username.toLowerCase(),
+    toName: targetAccount.name,
     status: 'PENDING',
     timestamp: new Date().toISOString(),
   };
@@ -883,6 +796,7 @@ export function deliverNudgeToUser(
     timestamp: nowIso,
     message: `${fromUser.name} mengingatkanmu untuk minum.`,
     isRead: false,
+    pushed: false, // picked up by api/send-reminders and sent as a push notification
   };
 
   const recipientNudges = getStoredNudges(toUserId);

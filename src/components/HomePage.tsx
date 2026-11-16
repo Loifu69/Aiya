@@ -25,11 +25,12 @@ interface HomePageProps {
   drinkStatus: DrinkStatus;
   currentTimeMs: number;
   todayIntakeMl: number;
-  onDrinkNow: () => void;
+  onDrinkNow: (amountMl?: number) => void;
   onTriggerAlarmNow: () => void;
   onFastForward: (minutes: number) => void;
   lastFeedbackMessage: string | null;
   onClearFeedback: () => void;
+  onUndoLastDrink?: () => void;
 }
 
 const HYDRATION_TIPS = [
@@ -53,6 +54,8 @@ function greeting(hour: number): { text: string; Icon: typeof Sun } {
 }
 
 const formatMl = (ml: number) => ml.toLocaleString('id-ID');
+
+const QUICK_AMOUNTS = [100, 200, 300, 500];
 
 // Bottle that fills up with gently moving water as today's intake grows
 const WaterBottle: React.FC<{ fillPercent: number; percent: number; intakeMl: number; targetMl: number }> = ({
@@ -113,6 +116,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onFastForward,
   lastFeedbackMessage,
   onClearFeedback,
+  onUndoLastDrink,
 }) => {
   const now = new Date(currentTimeMs);
   const { text: greetText, Icon: GreetIcon } = greeting(now.getHours());
@@ -165,12 +169,22 @@ export const HomePage: React.FC<HomePageProps> = ({
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
             <p className="text-sm font-semibold">{lastFeedbackMessage}</p>
           </div>
-          <button
-            onClick={onClearFeedback}
-            className="text-xs text-emerald-700 hover:text-emerald-900 font-medium px-2 py-1 rounded shrink-0"
-          >
-            Tutup
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {onUndoLastDrink && (
+              <button
+                onClick={onUndoLastDrink}
+                className="text-xs text-emerald-800 hover:text-emerald-950 font-bold px-2.5 py-1 rounded-lg bg-white/70 hover:bg-white border border-emerald-200"
+              >
+                Batalkan
+              </button>
+            )}
+            <button
+              onClick={onClearFeedback}
+              className="text-xs text-emerald-700 hover:text-emerald-900 font-medium px-2 py-1 rounded"
+            >
+              Tutup
+            </button>
+          </div>
         </div>
       )}
 
@@ -268,7 +282,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             {/* Actions */}
             <div className="flex flex-col sm:flex-row gap-3 justify-center md:justify-start">
               <button
-                onClick={onDrinkNow}
+                onClick={() => onDrinkNow()}
                 className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-500 hover:from-sky-500 hover:to-cyan-400 text-white dark:from-[#0369a1] dark:to-[#0e7490] dark:hover:from-[#0284c7] dark:hover:to-[#0891b2] dark:text-[#f8fafc] font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-sky-500/25 transition-colors active:scale-[0.98]"
               >
                 <Droplets className="w-4 h-4" />
@@ -282,6 +296,20 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <BellRing className="w-4 h-4" />
                 <span>Tes Suara</span>
               </button>
+            </div>
+
+            {/* Quick amounts for when it wasn't a full glass (or was more) */}
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-1.5">
+              <span className="text-[11px] text-slate-500 mr-1">Jumlah lain:</span>
+              {QUICK_AMOUNTS.filter((ml) => ml !== settings.glassMl).map((ml) => (
+                <button
+                  key={ml}
+                  onClick={() => onDrinkNow(ml)}
+                  className="px-2.5 py-1 rounded-full bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[11px] font-bold tabular-nums transition-colors"
+                >
+                  +{formatMl(ml)} ml
+                </button>
+              ))}
             </div>
           </div>
         </div>

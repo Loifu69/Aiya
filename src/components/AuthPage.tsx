@@ -13,15 +13,14 @@ import {
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { loginAccount, registerAccount } from '../utils/storage';
-import { isFirebaseReady } from '../utils/firebase';
 import { WaterBackground } from './WaterDecor';
 
 interface AuthPageProps {
   onAuthSuccess: (account: UserAccount) => void;
-  onOpenCloudSync?: () => void;
+  notice?: string | null; // e.g. "please log in again" after a session ended
 }
 
-export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSync }) => {
+export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, notice }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -130,6 +129,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
             </button>
           </div>
 
+          {notice && !errorMsg && !successMsg && (
+            <div className="mb-4 p-3 bg-sky-50 border border-sky-200 text-sky-800 rounded-xl flex items-start gap-2.5 text-xs">
+              <Lock className="w-4 h-4 shrink-0 mt-0.5 text-sky-600" />
+              <span>{notice}</span>
+            </div>
+          )}
+
           {/* Feedback Alerts */}
           {errorMsg && (
             <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl flex items-start gap-2.5 text-xs animate-in fade-in">
@@ -223,20 +229,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-
-          {/* Cloud sync */}
-          {onOpenCloudSync && (
-            <div className="mt-5 pt-4 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={onOpenCloudSync}
-                className="text-[11px] text-sky-600 hover:text-sky-800 font-semibold flex items-center justify-center gap-1.5 w-full cursor-pointer transition-colors"
-              >
-                <Cloud className="w-3.5 h-3.5" />
-                <span>{isFirebaseReady() ? '✓ Database Cloud Terhubung' : 'Hubungkan ke Database Online (Firebase)'}</span>
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Footer info */}

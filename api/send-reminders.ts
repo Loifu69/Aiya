@@ -24,12 +24,16 @@ export interface DueStatus {
   userId: string;
   dueAt: string;
   nextAlarmAt: string;
+  intakeDate?: string; // local day of intakeMl
+  intakeMl?: number;
   // Moves nextAlarmAt forward; returns false if the doc changed meanwhile (e.g. user just drank)
   reschedule: (nextAlarmAtIso: string) => Promise<boolean>;
 }
 
 export interface ReminderSettings {
   snoozeMinutes?: number;
+  dailyTargetMl?: number;
+  stopWhenTargetReached?: boolean;
   quietHoursEnabled?: boolean;
   quietStart?: string;
   quietEnd?: string;
@@ -42,8 +46,20 @@ export interface DeviceSubscription {
   timeZone?: string;
 }
 
+// A friend's "Ingatkan" that still has to go out as a push notification
+export interface PendingNudge {
+  id: string;
+  toUserId: string;
+  fromName: string;
+  message: string;
+  isRead: boolean; // already seen in the open app -> no push needed
+}
+
 export interface ReminderStore {
   getDueStatuses(nowIso: string): Promise<DueStatus[]>;
+  getPendingNudges(): Promise<PendingNudge[]>;
+  // Marks it as handled; returns false if another run already took it
+  markNudgePushed(id: string): Promise<boolean>;
   getSettings(userId: string): Promise<ReminderSettings | null>;
   getSubscriptions(userId: string): Promise<DeviceSubscription[]>;
   deleteSubscription(id: string): Promise<void>;
@@ -90,6 +106,7 @@ export interface RunSummary {
   noDevice: number;
   removedDevices: number;
   skippedChanged: number;
+  targetReached: number;
   failed: number;
 }
 
@@ -107,6 +124,15 @@ export function localTimeHM(nowMs: number, timeZone: string): string {
     }).format(new Date(nowMs));
   } catch {
     return localTimeHM(nowMs, DEFAULT_TIME_ZONE);
+  }
+}
+
+// 'YYYY-MM-DD' in the user's own time zone (matches the app's local day)
+export function localDateKey(nowMs: number, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
+  } catch {
+    return localDateKey(nowMs, DEFAULT_TIME_ZONE);
   }
 }
 
@@ -141,7 +167,7 @@ export async function processDueReminders(
   nowMs: number,
   makeTicket?: MakeTicket
 ): Promise<RunSummary> {
-  const summary: RunSummary = { due: 0, sent: 0, quiet: 0, noDevice: 0, removedDevices: 0, skippedChanged: 0, failed: 0 };
+  const summary: RunSummary = { due: 0, sent: 0, quiet: 0, noDevice: 0, removedDevices: 0, skippedChanged: 0, targetReached: 0, failed: 0 };
   const due = await store.getDueStatuses(new Date(nowMs).toISOString());
   summary.due = due.length;
 
@@ -171,6 +197,18 @@ export async function processDueReminders(
         return;
       }
 
+      // Optional: no reminders once today's target is reached
+      const target = settings?.dailyTargetMl || 0;
+      if (
+        settings?.stopWhenTargetReached &&
+        target > 0 &&
+        status.intakeDate === localDateKey(nowMs, timeZone) &&
+        (status.intakeMl || 0) >= target
+      ) {
+        summary.targetReached++;
+        return;
+      }
+
       const payload: PushPayload = { ...buildReminderPayload(status.dueAt, nowMs), drink: makeTicket?.(status.userId) };
       let anySent = false;
       await Promise.all(
@@ -197,6 +235,66 @@ export async function processDueReminders(
   return summary;
 }
 
+export interface NudgeSummary {
+  nudges: number;
+  nudgesSent: number;
+  nudgesSkipped: number;
+}
+
+// Sends friends' reminders ("Ingatkan") to the recipient's devices.
+export async function processPendingNudges(
+  store: ReminderStore,
+  send: SendPush,
+  nowMs: number,
+  makeTicket?: MakeTicket
+): Promise<NudgeSummary> {
+  const summary: NudgeSummary = { nudges: 0, nudgesSent: 0, nudgesSkipped: 0 };
+  const pending = await store.getPendingNudges();
+  summary.nudges = pending.length;
+
+  await Promise.all(
+    pending.map(async (nudge) => {
+      if (!(await store.markNudgePushed(nudge.id))) return;
+      if (nudge.isRead) {
+        summary.nudgesSkipped++;
+        return;
+      }
+      const [settings, subs] = await Promise.all([
+        store.getSettings(nudge.toUserId),
+        store.getSubscriptions(nudge.toUserId),
+      ]);
+      const timeZone = subs.find((s) => s.timeZone)?.timeZone || DEFAULT_TIME_ZONE;
+      if (subs.length === 0 || isInQuietHours(settings, nowMs, timeZone)) {
+        summary.nudgesSkipped++;
+        return;
+      }
+      const payload: PushPayload = {
+        title: `${nudge.fromName || 'Temanmu'} mengingatkanmu!`,
+        body: nudge.message || 'Ayo minum air sekarang.',
+        tag: 'aiya-nudge',
+        url: '/#home',
+        drink: makeTicket?.(nudge.toUserId),
+      };
+      let anySent = false;
+      await Promise.all(
+        subs.map(async (sub) => {
+          try {
+            await send(sub, payload);
+            anySent = true;
+          } catch (err) {
+            const code = (err as { statusCode?: number }).statusCode;
+            if (code === 404 || code === 410) await store.deleteSubscription(sub.id);
+            else console.error(`Nudge push failed for ${nudge.toUserId}:`, err);
+          }
+        })
+      );
+      if (anySent) summary.nudgesSent++;
+      else summary.nudgesSkipped++;
+    })
+  );
+  return summary;
+}
+
 // ----------------- Firestore + web-push wiring -----------------
 
 function firestoreStore(): ReminderStore {
@@ -217,6 +315,8 @@ function firestoreStore(): ReminderStore {
           userId: d.id,
           dueAt: String(data.dueAt || ''),
           nextAlarmAt: String(data.nextAlarmAt || ''),
+          intakeDate: typeof data.intakeDate === 'string' ? data.intakeDate : undefined,
+          intakeMl: typeof data.intakeMl === 'number' ? data.intakeMl : undefined,
           reschedule: async (nextAlarmAt: string) => {
             try {
               await d.ref.update({ nextAlarmAt }, { lastUpdateTime: updateTime });
@@ -238,6 +338,28 @@ function firestoreStore(): ReminderStore {
     },
     async deleteSubscription(id) {
       await db.collection('pushSubscriptions').doc(id).delete();
+    },
+    async getPendingNudges() {
+      const snap = await db.collection('nudges').where('pushed', '==', false).get();
+      return snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          toUserId: String(data.toUserId || ''),
+          fromName: String(data.fromName || ''),
+          message: String(data.message || ''),
+          isRead: Boolean(data.isRead),
+        };
+      });
+    },
+    async markNudgePushed(id) {
+      const ref = db.collection('nudges').doc(id);
+      return db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.data()?.pushed !== false) return false;
+        tx.update(ref, { pushed: true });
+        return true;
+      });
     },
   };
 }
@@ -265,8 +387,14 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     const now = Date.now();
-    const summary = await processDueReminders(firestoreStore(), webPushSender(), now, ticketMaker(secret, now));
-    return Response.json({ ok: true, ...summary });
+    const store = firestoreStore();
+    const send = webPushSender();
+    const makeTicket = ticketMaker(secret, now);
+    const [summary, nudgeSummary] = await Promise.all([
+      processDueReminders(store, send, now, makeTicket),
+      processPendingNudges(store, send, now, makeTicket),
+    ]);
+    return Response.json({ ok: true, ...summary, ...nudgeSummary });
   } catch (err) {
     console.error('send-reminders error:', err);
     return Response.json({ ok: false, error: String(err) }, { status: 500 });

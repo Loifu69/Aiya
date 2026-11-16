@@ -1,0 +1,114 @@
+rules_version = '2';
+
+// Aiya Firestore security rules.
+// The app signs in with a Firebase custom token from api/auth.ts, so request.auth.uid is the
+// Aiya user id (e.g. "user-1793783132150-354"). Server code (api/*) uses the Admin SDK and
+// is not affected by these rules.
+//
+// Publish: Firebase Console > Firestore Database > Rules > paste this file > Publish.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isMe(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Friendship docs are named "<idA>_<idB>" (ids sorted), so check both orders
+    function areFriends(a, b) {
+      return exists(/databases/$(database)/documents/friendships/$(a + '_' + b))
+        || exists(/databases/$(database)/documents/friendships/$(b + '_' + a));
+    }
+
+    // Public profile (name, avatar). One lookup by username at a time; no listing everyone.
+    match /accounts/{uid} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 1;
+      allow update: if isMe(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'avatar']);
+      allow create, delete: if false; // api/auth.ts
+    }
+
+    // Password hashes and username reservations: server only
+    match /credentials/{uid} {
+      allow read, write: if false;
+    }
+    match /usernames/{name} {
+      allow read, write: if false;
+    }
+
+    match /settings/{uid} {
+      allow read, write: if isMe(uid);
+    }
+
+    // Drink status: friends may read it (schedule + today's progress)
+    match /statuses/{uid} {
+      allow read: if isMe(uid) || (signedIn() && areFriends(request.auth.uid, uid));
+      allow write: if isMe(uid);
+    }
+
+    match /drinkLogs/{logId} {
+      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    match /friendRequests/{reqId} {
+      allow read, delete: if signedIn()
+        && (resource.data.toUserId == request.auth.uid || resource.data.fromUserId == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.toUserId != request.auth.uid;
+      allow update: if false;
+    }
+
+    // A friendship can only be created by the person who received the request
+    match /friendships/{fid} {
+      allow read, delete: if signedIn()
+        && (resource.data.user1Id == request.auth.uid || resource.data.user2Id == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.user2Id == request.auth.uid
+        && get(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.toUserId == request.auth.uid
+        && get(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.fromUserId == request.resource.data.user1Id;
+      allow update: if false;
+    }
+
+    // "Ingatkan": only to friends; the recipient can only mark it as read
+    match /nudges/{nudgeId} {
+      allow read: if signedIn() && resource.data.toUserId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.pushed == false
+        && areFriends(request.auth.uid, request.resource.data.toUserId);
+      allow update: if signedIn()
+        && resource.data.toUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if false;
+    }
+
+    match /pushSubscriptions/{subId} {
+      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    match /ringtoneChunks/{chunkId} {
+      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // Anything else (e.g. the old userFriends lists) is closed
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -10,12 +10,13 @@ import {
   query,
   where,
   onSnapshot,
+  limit,
   deleteDoc,
   deleteField,
   runTransaction,
   Unsubscribe,
 } from 'firebase/firestore';
-import { createCredential, PasswordCredential } from './password';
+import { Auth, getAuth, onAuthStateChanged, signInWithCustomToken, signOut, User } from 'firebase/auth';
 import {
   DrinkLog,
   DrinkStatus,
@@ -26,7 +27,7 @@ import {
   UserSettings,
 } from '../types';
 
-// Load config from Vite environment variables (or localStorage fallback for easy setup in UI)
+// Firebase web config (public values; access is controlled by Firestore rules + Auth)
 const env = import.meta.env;
 
 export interface FirebaseCustomConfig {
@@ -38,8 +39,6 @@ export interface FirebaseCustomConfig {
   appId: string;
 }
 
-const STORAGE_KEY_FIREBASE = 'aiya_firebase_runtime_config_v1';
-
 // Default configuration from Firebase Project "Aiya"
 const DEFAULT_FIREBASE_CONFIG: FirebaseCustomConfig = {
   apiKey: "AIzaSyArwGQDf6kUuD5elaqswIy96HNIFDW53sQ",
@@ -50,8 +49,8 @@ const DEFAULT_FIREBASE_CONFIG: FirebaseCustomConfig = {
   appId: "1:388168705041:web:a6384b8809a0ed6848fdb0",
 };
 
-export function getStoredFirebaseConfig(): FirebaseCustomConfig | null {
-  // 1. Try env vars first
+// Env vars (VITE_FIREBASE_*) override the built-in project config
+function firebaseConfig(): FirebaseCustomConfig {
   if (env.VITE_FIREBASE_PROJECT_ID && env.VITE_FIREBASE_API_KEY) {
     return {
       apiKey: env.VITE_FIREBASE_API_KEY,
@@ -62,25 +61,7 @@ export function getStoredFirebaseConfig(): FirebaseCustomConfig | null {
       appId: env.VITE_FIREBASE_APP_ID || '',
     };
   }
-
-  // 2. Try localStorage custom config (useful for immediate in-browser setup)
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_FIREBASE);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // ignore
-  }
-
-  // 3. Built-in default project config
   return DEFAULT_FIREBASE_CONFIG;
-}
-
-export function saveStoredFirebaseConfig(config: FirebaseCustomConfig): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_FIREBASE, JSON.stringify(config));
-  } catch {
-    // ignore
-  }
 }
 
 let appInstance: FirebaseApp | null = null;
@@ -89,8 +70,8 @@ let dbInstance: Firestore | null = null;
 export function initFirebase(): { app: FirebaseApp | null; db: Firestore | null } {
   if (dbInstance) return { app: appInstance, db: dbInstance };
 
-  const config = getStoredFirebaseConfig();
-  if (!config || !config.projectId || !config.apiKey) {
+  const config = firebaseConfig();
+  if (!config.projectId || !config.apiKey) {
     return { app: null, db: null };
   }
 
@@ -103,6 +84,43 @@ export function initFirebase(): { app: FirebaseApp | null; db: Firestore | null 
     console.warn('Firebase initialization notice:', err);
     return { app: null, db: null };
   }
+}
+
+// ----------------- FIREBASE AUTH (signed in with a custom token from api/auth.ts) -----------------
+
+export function firebaseAuth(): Auth | null {
+  const { app } = initFirebase();
+  return app ? getAuth(app) : null;
+}
+
+export function currentAuthUid(): string | null {
+  return firebaseAuth()?.currentUser?.uid ?? null;
+}
+
+export async function signInWithServerToken(token: string): Promise<void> {
+  const auth = firebaseAuth();
+  if (!auth) throw new Error('Firebase is not configured');
+  await signInWithCustomToken(auth, token);
+}
+
+export async function firebaseSignOut(): Promise<void> {
+  const auth = firebaseAuth();
+  if (auth) await signOut(auth).catch(() => {});
+}
+
+// Called with the signed-in user (or null) once the saved session is restored, and on every change
+export function onFirebaseUser(callback: (user: User | null) => void): () => void {
+  const auth = firebaseAuth();
+  if (!auth) {
+    callback(null);
+    return () => {};
+  }
+  return onAuthStateChanged(auth, callback);
+}
+
+export async function currentIdToken(): Promise<string | null> {
+  const user = firebaseAuth()?.currentUser;
+  return user ? user.getIdToken() : null;
 }
 
 export function isFirebaseReady(): boolean {
@@ -127,213 +145,40 @@ export function sanitizeAccount(raw: unknown): UserAccount {
   return account;
 }
 
-// Credentials live in their own collection, never inside the public account doc.
-export async function firestoreGetCredential(userId: string): Promise<PasswordCredential | null> {
-  const { db } = initFirebase();
-  if (!db) return null;
-  try {
-    const snap = await getDoc(doc(db, 'credentials', userId));
-    return snap.exists() ? (snap.data() as PasswordCredential) : null;
-  } catch (err) {
-    console.error('Firestore get credential error:', err);
-    return null;
-  }
-}
-
-// Move a legacy plain-text password out of the account doc into a hashed credential.
-async function migrateLegacyPassword(db: Firestore, userId: string, plain: string): Promise<PasswordCredential | null> {
-  try {
-    const credRef = doc(db, 'credentials', userId);
-    const existing = await getDoc(credRef);
-    let cred = existing.exists() ? (existing.data() as PasswordCredential) : null;
-    if (!cred) {
-      cred = createCredential(userId, plain);
-      await setDoc(credRef, cred);
-    }
-    await setDoc(doc(db, 'accounts', userId), { password: deleteField() }, { merge: true });
-    return cred;
-  } catch (err) {
-    console.error('Firestore password migration error:', err);
-    return null;
-  }
-}
-
-export interface LoginRecord {
-  account: UserAccount;
-  credential: PasswordCredential | null;
-}
-
-// Look up everything needed to check a login, migrating an old plain-text password if found.
-export async function firestoreGetLoginRecord(username: string): Promise<LoginRecord | null> {
-  const { db } = initFirebase();
-  if (!db) return null;
-
-  try {
-    const snap = await getDocs(
-      query(collection(db, 'accounts'), where('username', '==', username.toLowerCase().trim()))
-    );
-    if (snap.empty) return null;
-    const raw = snap.docs[0].data();
-    const account = sanitizeAccount(raw);
-
-    let credential = await firestoreGetCredential(account.id);
-    if (typeof raw.password === 'string' && raw.password) {
-      credential = (await migrateLegacyPassword(db, account.id, raw.password)) || credential;
-    }
-    return { account, credential };
-  } catch (err) {
-    console.error('Firestore login lookup error:', err);
-    return null;
-  }
-}
-
-export async function firestoreSaveCredential(cred: PasswordCredential): Promise<boolean> {
-  const { db } = initFirebase();
-  if (!db) return false;
-  try {
-    await setDoc(doc(db, 'credentials', cred.userId), cred);
-    return true;
-  } catch (err) {
-    console.error('Firestore save credential error:', err);
-    return false;
-  }
-}
-
-// Cloud Account: Register
-export async function firestoreRegisterAccount(
-  account: UserAccount,
+// Make sure the signed-in user's settings and status docs exist (older accounts / first login).
+// Accounts, usernames and credentials are created by the server (api/auth.ts).
+export async function firestoreEnsureUserDocs(
+  userId: string,
   settings: UserSettings,
   status: DrinkStatus
-): Promise<boolean> {
+): Promise<void> {
   const { db } = initFirebase();
-  if (!db) return false;
-
+  if (!db) return;
   try {
-    // Never let a cached/stale account claim a username owned by another account
-    const uname = account.username.toLowerCase().trim();
-    const usernameRef = doc(db, 'usernames', uname);
-    const owned = await runTransaction(db, async (tx) => {
-      const snap = await tx.get(usernameRef);
-      if (snap.exists() && snap.data().userId !== account.id) return false;
-      if (!snap.exists()) {
-        tx.set(usernameRef, { userId: account.id, createdAt: new Date().toISOString() });
-      }
-      return true;
-    });
-    if (!owned) {
-      console.warn(`Username "${uname}" belongs to another account; skipping cloud sync.`);
-      return false;
-    }
-
-    // Save account (public fields only)
-    await setDoc(doc(db, 'accounts', account.id), sanitizeAccount(account));
-    // Settings and drink status: the cloud copy is the source of truth. Only create them
-    // when missing, so a new device (with placeholder local data) never overwrites them.
-    const settingsRef = doc(db, 'settings', account.id);
-    if (!(await getDoc(settingsRef)).exists()) {
-      await setDoc(settingsRef, settings);
-    }
-    const statusRef = doc(db, 'statuses', account.id);
-    if (!(await getDoc(statusRef)).exists()) {
-      await setDoc(statusRef, { ...status, userId: account.id });
-    }
-    return true;
+    const settingsRef = doc(db, 'settings', userId);
+    if (!(await getDoc(settingsRef)).exists()) await setDoc(settingsRef, { ...settings, userId });
+    const statusRef = doc(db, 'statuses', userId);
+    if (!(await getDoc(statusRef)).exists()) await setDoc(statusRef, { ...status, userId });
   } catch (err) {
-    console.error('Firestore register error:', err);
-    return false;
+    console.error('Firestore ensure user docs error:', err);
   }
 }
 
-// Cloud Account: Create with a GUARANTEED-UNIQUE username.
-// Reserves `usernames/{username}` inside a transaction, so two people can never
-// get the same username, even if they register at the same moment.
-export type CreateAccountResult = 'ok' | 'taken' | 'error';
-
-export async function firestoreCreateAccountUnique(
-  account: UserAccount,
-  settings: UserSettings,
-  status: DrinkStatus,
-  credential: PasswordCredential
-): Promise<CreateAccountResult> {
+// One account by id (allowed for any signed-in user: friends need names/avatars)
+export async function firestoreGetAccount(userId: string): Promise<UserAccount | null> {
   const { db } = initFirebase();
-  if (!db) return 'error';
-
-  const username = account.username.toLowerCase().trim();
-
+  if (!db) return null;
   try {
-    // Older accounts were created before username reservations existed
-    const legacy = await getDocs(
-      query(collection(db, 'accounts'), where('username', '==', username))
-    );
-    if (!legacy.empty) return 'taken';
-
-    await runTransaction(db, async (tx) => {
-      const usernameRef = doc(db, 'usernames', username);
-      const snap = await tx.get(usernameRef);
-      if (snap.exists()) {
-        throw new Error('USERNAME_TAKEN');
-      }
-      tx.set(usernameRef, { userId: account.id, createdAt: new Date().toISOString() });
-      tx.set(doc(db, 'accounts', account.id), sanitizeAccount(account));
-      tx.set(doc(db, 'credentials', account.id), credential);
-      tx.set(doc(db, 'settings', account.id), settings);
-      tx.set(doc(db, 'statuses', account.id), status);
-    });
-    return 'ok';
+    const snap = await getDoc(doc(db, 'accounts', userId));
+    return snap.exists() ? sanitizeAccount(snap.data()) : null;
   } catch (err) {
-    if (err instanceof Error && err.message === 'USERNAME_TAKEN') return 'taken';
-    console.error('Firestore create account error:', err);
-    return 'error';
+    console.error('Firestore get account error:', err);
+    return null;
   }
 }
 
-// Cloud Account: Delete Account & related documents
-export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
-  const { db } = initFirebase();
-  if (!db) return false;
 
-  try {
-    // Release the username reservation so it can be used again
-    const accSnap = await getDoc(doc(db, 'accounts', userId));
-    const uname = accSnap.exists() ? String(accSnap.data().username || '').toLowerCase().trim() : '';
-    if (uname) {
-      const resSnap = await getDoc(doc(db, 'usernames', uname));
-      if (resSnap.exists() && resSnap.data().userId === userId) {
-        await deleteDoc(doc(db, 'usernames', uname));
-      }
-    }
 
-    await deleteDoc(doc(db, 'accounts', userId));
-    await deleteDoc(doc(db, 'credentials', userId));
-    await deleteDoc(doc(db, 'settings', userId));
-    await deleteDoc(doc(db, 'statuses', userId));
-    await deleteDoc(doc(db, 'userFriends', userId));
-
-    // Delete every doc that references this user: friendships (both sides lose the friend),
-    // friend requests and nudges (sent or received), and drink logs.
-    const targets: [string, string][] = [
-      ['friendships', 'user1Id'],
-      ['friendships', 'user2Id'],
-      ['friendRequests', 'fromUserId'],
-      ['friendRequests', 'toUserId'],
-      ['nudges', 'fromUserId'],
-      ['nudges', 'toUserId'],
-      ['drinkLogs', 'userId'],
-      ['pushSubscriptions', 'userId'],
-      ['ringtoneChunks', 'userId'],
-    ];
-    for (const [col, field] of targets) {
-      const snap = await getDocs(query(collection(db, col), where(field, '==', userId)));
-      for (const d of snap.docs) {
-        await deleteDoc(d.ref);
-      }
-    }
-    return true;
-  } catch (err) {
-    console.error('Firestore delete account error:', err);
-    return false;
-  }
-}
 
 // Cloud Account: Find By Username
 export async function firestoreFindAccountByUsername(
@@ -345,7 +190,8 @@ export async function firestoreFindAccountByUsername(
   try {
     const q = query(
       collection(db, 'accounts'),
-      where('username', '==', username.toLowerCase().trim())
+      where('username', '==', username.toLowerCase().trim()),
+      limit(1)
     );
     const snap = await getDocs(q);
     if (!snap.empty) {
@@ -357,26 +203,6 @@ export async function firestoreFindAccountByUsername(
   return null;
 }
 
-// Cloud Account: Get All Accounts
-export async function firestoreGetAllAccounts(): Promise<UserAccount[]> {
-  const { db } = initFirebase();
-  if (!db) return [];
-
-  try {
-    const snap = await getDocs(collection(db, 'accounts'));
-    // Clean up any account docs that still carry a plain-text password
-    for (const d of snap.docs) {
-      const raw = d.data();
-      if (typeof raw.password === 'string' && raw.password) {
-        migrateLegacyPassword(db, d.id, raw.password).catch(() => {});
-      }
-    }
-    return snap.docs.map((d) => sanitizeAccount(d.data()));
-  } catch (err) {
-    console.error('Firestore get all accounts error:', err);
-    return [];
-  }
-}
 
 // Cloud Account: update display name (friends see it live)
 export async function firestoreUpdateAccountName(userId: string, name: string): Promise<boolean> {
@@ -444,6 +270,20 @@ export async function firestoreUpdateNextAlarm(userId: string, nextAlarmAt: stri
     await setDoc(doc(db, 'statuses', userId), { nextAlarmAt }, { merge: true });
   } catch (err) {
     console.error('Firestore update next alarm error:', err);
+  }
+}
+
+// Today's intake on the status doc (read by the reminder server and by friends)
+export async function firestoreUpdateIntake(
+  userId: string,
+  intake: { intakeDate: string; intakeMl: number; targetMl: number }
+): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+  try {
+    await setDoc(doc(db, 'statuses', userId), intake, { merge: true });
+  } catch (err) {
+    console.error('Firestore update intake error:', err);
   }
 }
 
@@ -515,60 +355,7 @@ export function firestoreSubscribeOutgoingRequests(
   return subscribePendingRequests('fromUserId', user.id, onChange);
 }
 
-export async function firestoreSaveUserFriends(
-  userId: string,
-  friends: Friend[],
-  username?: string
-): Promise<void> {
-  const { db } = initFirebase();
-  if (!db) return;
 
-  try {
-    await setDoc(doc(db, 'userFriends', userId), { friends }, { merge: true });
-    if (username) {
-      await setDoc(doc(db, 'userFriends', `usr_${username.toLowerCase().trim()}`), { friends }, { merge: true });
-    }
-  } catch (err) {
-    console.error('Firestore save userFriends error:', err);
-  }
-}
-
-export function firestoreSubscribeUserFriends(
-  user: { id: string; username?: string } | string,
-  onChange: (friends: Friend[]) => void
-): Unsubscribe | null {
-  const { db } = initFirebase();
-  if (!db) return null;
-
-  const targetId = typeof user === 'string' ? user : user.id;
-  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
-
-  // Listen to primary userFriends document
-  return onSnapshot(
-    doc(db, 'userFriends', targetId),
-    (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data && Array.isArray(data.friends)) {
-          onChange(data.friends);
-          return;
-        }
-      }
-      // If primary not found or empty, check username fallback
-      if (targetUsername) {
-        getDoc(doc(db, 'userFriends', `usr_${targetUsername}`)).then((uSnap) => {
-          if (uSnap.exists()) {
-            const uData = uSnap.data();
-            if (uData && Array.isArray(uData.friends)) {
-              onChange(uData.friends);
-            }
-          }
-        }).catch(() => { });
-      }
-    },
-    (err) => console.warn('UserFriends listener:', err)
-  );
-}
 
 function getFriendshipId(userAId: string, userBId: string): string {
   return [userAId, userBId].sort().join('_');
@@ -587,8 +374,9 @@ export async function firestoreAcceptFriendRequest(
     const friendshipId = getFriendshipId(requesterUser.id, recipientUser.id);
     await setDoc(doc(db, 'friendships', friendshipId), {
       id: friendshipId,
-      user1Id: requesterUser.id,
-      user2Id: recipientUser.id,
+      user1Id: requesterUser.id, // sent the request
+      user2Id: recipientUser.id, // accepted it (the signed-in user)
+      requestId: request.id,
       createdAt: new Date().toISOString(),
     });
 
@@ -609,17 +397,6 @@ export async function firestoreRemoveFriendship(userAId: string, userBId: string
   try {
     await deleteDoc(doc(db, 'friendships', getFriendshipId(userAId, userBId)));
 
-    // Clean legacy userFriends docs so an old list can never resurrect the friendship
-    for (const [ownerId, otherId] of [[userAId, userBId], [userBId, userAId]]) {
-      const ref = doc(db, 'userFriends', ownerId);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const list = (snap.data().friends || []) as Friend[];
-        if (list.some((f) => f.id === otherId)) {
-          await setDoc(ref, { friends: list.filter((f) => f.id !== otherId) }, { merge: true });
-        }
-      }
-    }
     return true;
   } catch (err) {
     console.error('Firestore remove friendship error:', err);
@@ -627,40 +404,6 @@ export async function firestoreRemoveFriendship(userAId: string, userBId: string
   }
 }
 
-// One-time migration: convert old per-user userFriends lists into shared friendships records
-export async function firestoreMigrateLegacyFriends(userId: string, username?: string): Promise<void> {
-  const { db } = initFirebase();
-  if (!db) return;
-
-  const legacyIds = [userId];
-  if (username) legacyIds.push(`usr_${username.toLowerCase().trim()}`);
-
-  try {
-    for (const legacyId of legacyIds) {
-      const ref = doc(db, 'userFriends', legacyId);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) continue;
-      const list = (snap.data().friends || []) as Friend[];
-      for (const f of list) {
-        if (!f?.id || f.id === userId) continue;
-        const fsRef = doc(db, 'friendships', getFriendshipId(userId, f.id));
-        const fsSnap = await getDoc(fsRef);
-        if (!fsSnap.exists()) {
-          await setDoc(fsRef, {
-            id: fsRef.id,
-            user1Id: f.id,
-            user2Id: userId,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      }
-      // Legacy list no longer used
-      await deleteDoc(ref);
-    }
-  } catch (err) {
-    console.error('Firestore migrate legacy friends error:', err);
-  }
-}
 
 export interface LiveFriendData {
   id: string;
@@ -869,33 +612,31 @@ export function firestoreSubscribeNudges(
 
 export const MAX_LOGS = 200; // enough for the 7-day chart even with many drinks a day
 
-export async function firestoreAddLog(log: DrinkLog): Promise<void> {
+export async function firestoreAddLog(log: DrinkLog): Promise<boolean> {
   const { db } = initFirebase();
-  if (!db) return;
+  if (!db) return false;
 
   try {
     await setDoc(doc(db, 'drinkLogs', log.id), log);
+    return true;
   } catch (err) {
     console.error('Firestore add log error:', err);
+    return false;
   }
 }
 
-// Newest first. Sorted on the client so no composite index is needed.
-export async function firestoreGetLogs(userId: string): Promise<DrinkLog[] | null> {
+export async function firestoreDeleteLog(logId: string): Promise<boolean> {
   const { db } = initFirebase();
-  if (!db) return null;
-
+  if (!db) return false;
   try {
-    const snap = await getDocs(query(collection(db, 'drinkLogs'), where('userId', '==', userId)));
-    return snap.docs
-      .map((d) => d.data() as DrinkLog)
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, MAX_LOGS);
+    await deleteDoc(doc(db, 'drinkLogs', logId));
+    return true;
   } catch (err) {
-    console.error('Firestore get logs error:', err);
-    return null;
+    console.error('Firestore delete log error:', err);
+    return false;
   }
 }
+
 
 // ----------------- PUSH SUBSCRIPTIONS (background reminders) -----------------
 
@@ -930,16 +671,20 @@ export async function firestoreDeletePushSubscription(id: string): Promise<void>
   }
 }
 
-// Live drink history, so a drink recorded on one device shows up on the others right away
+// Live drink history for the given days only (e.g. the last 30), so reads stay small
+// no matter how long the account has been used. '==' + 'in' needs no composite index.
+export const HISTORY_DAYS = 30; // Firestore 'in' accepts at most 30 values
+
 export function firestoreSubscribeLogs(
   userId: string,
+  dayKeys: string[],
   onChange: (logs: DrinkLog[]) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
   return onSnapshot(
-    query(collection(db, 'drinkLogs'), where('userId', '==', userId)),
+    query(collection(db, 'drinkLogs'), where('userId', '==', userId), where('dayKey', 'in', dayKeys.slice(0, HISTORY_DAYS))),
     (snap) => {
       onChange(
         snap.docs
@@ -950,6 +695,20 @@ export function firestoreSubscribeLogs(
     },
     (err) => console.warn('Drink logs listener:', err)
   );
+}
+
+// One-time fix for logs saved before 'dayKey' existed, so they show up in the query above
+export async function firestoreBackfillLogDayKeys(userId: string, toDayKey: (ms: number) => string): Promise<number> {
+  const { db } = initFirebase();
+  if (!db) return 0;
+  const snap = await getDocs(query(collection(db, 'drinkLogs'), where('userId', '==', userId)));
+  const missing = snap.docs.filter((d) => !d.data().dayKey);
+  await Promise.all(
+    missing.map((d) =>
+      setDoc(d.ref, { dayKey: toDayKey(new Date(String(d.data().timestamp)).getTime()) }, { merge: true })
+    )
+  );
+  return missing.length;
 }
 
 // ----------------- CUSTOM RINGTONE (audio stored as base64 chunks) -----------------
@@ -983,7 +742,11 @@ export async function firestoreLoadRingtoneChunks(ringtoneId: string): Promise<s
   const { db } = initFirebase();
   if (!db) return null;
   try {
-    const snap = await getDocs(query(collection(db, 'ringtoneChunks'), where('ringtoneId', '==', ringtoneId)));
+    const uid = currentAuthUid();
+    if (!uid) return null;
+    const snap = await getDocs(
+      query(collection(db, 'ringtoneChunks'), where('userId', '==', uid), where('ringtoneId', '==', ringtoneId))
+    );
     if (snap.empty) return null;
     return snap.docs
       .map((d) => d.data() as RingtoneChunk)
@@ -999,7 +762,11 @@ export async function firestoreDeleteRingtone(ringtoneId: string): Promise<void>
   const { db } = initFirebase();
   if (!db) return;
   try {
-    const snap = await getDocs(query(collection(db, 'ringtoneChunks'), where('ringtoneId', '==', ringtoneId)));
+    const uid = currentAuthUid();
+    if (!uid) return;
+    const snap = await getDocs(
+      query(collection(db, 'ringtoneChunks'), where('userId', '==', uid), where('ringtoneId', '==', ringtoneId))
+    );
     for (const d of snap.docs) await deleteDoc(d.ref);
   } catch (err) {
     console.error('Firestore delete ringtone error:', err);

@@ -28,13 +28,21 @@ export interface DrinkTicket {
 export interface DrinkStoreUser {
   intervalMinutes: number;
   glassMl: number;
+  dailyTargetMl: number;
   dueAt: string | null;
   lastDrinkAt: string | null;
+  intakeDate: string | null;
+  intakeMl: number;
+  timeZone: string; // from the user's push subscription, for the local day
 }
 
 export interface DrinkStore {
   getUser(userId: string): Promise<DrinkStoreUser | null>;
-  saveDrink(userId: string, status: { lastDrinkAt: string; dueAt: string; nextAlarmAt: string }, log: DrinkLogDoc): Promise<void>;
+  saveDrink(
+    userId: string,
+    status: { lastDrinkAt: string; dueAt: string; nextAlarmAt: string; intakeDate: string; intakeMl: number; targetMl: number },
+    log: DrinkLogDoc
+  ): Promise<void>;
 }
 
 export interface DrinkLogDoc {
@@ -43,6 +51,7 @@ export interface DrinkLogDoc {
   action: 'SUDAH' | 'MANUAL';
   timestamp: string;
   amountMl: number;
+  dayKey: string;
   note: string;
 }
 
@@ -52,6 +61,15 @@ export type DrinkResult =
 
 const DEFAULT_INTERVAL_MINUTES = 180;
 const DEFAULT_GLASS_ML = 250;
+const DEFAULT_TARGET_ML = 2000;
+
+export function localDateKey(nowMs: number, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
+  }
+}
 // A second press within this window (double tap, two devices) is not counted twice
 const DUPLICATE_WINDOW_MS = 60 * 1000;
 
@@ -90,16 +108,26 @@ export async function recordDrink(
   const nowIso = new Date(nowMs).toISOString();
   const nextIso = new Date(nowMs + interval * 60000).toISOString();
   const wasDue = user.dueAt ? nowMs >= new Date(user.dueAt).getTime() : true;
+  const today = localDateKey(nowMs, user.timeZone);
+  const intakeMl = (user.intakeDate === today ? user.intakeMl : 0) + amountMl;
 
   await store.saveDrink(
     userId,
-    { lastDrinkAt: nowIso, dueAt: nextIso, nextAlarmAt: nextIso },
+    {
+      lastDrinkAt: nowIso,
+      dueAt: nextIso,
+      nextAlarmAt: nextIso,
+      intakeDate: today,
+      intakeMl,
+      targetMl: user.dailyTargetMl > 0 ? user.dailyTargetMl : DEFAULT_TARGET_ML,
+    },
     {
       id: `log-${nowMs}-${Math.floor(Math.random() * 1000)}`,
       userId,
       action: wasDue ? 'SUDAH' : 'MANUAL',
       timestamp: nowIso,
       amountMl,
+      dayKey: today,
       note: 'Dicatat dari notifikasi',
     }
   );
@@ -118,9 +146,10 @@ function firestoreDrinkStore(): DrinkStore {
 
   return {
     async getUser(userId) {
-      const [settingsSnap, statusSnap] = await Promise.all([
+      const [settingsSnap, statusSnap, subsSnap] = await Promise.all([
         db.collection('settings').doc(userId).get(),
         db.collection('statuses').doc(userId).get(),
+        db.collection('pushSubscriptions').where('userId', '==', userId).limit(1).get(),
       ]);
       if (!settingsSnap.exists && !statusSnap.exists) return null;
       const s = settingsSnap.data() || {};
@@ -128,8 +157,12 @@ function firestoreDrinkStore(): DrinkStore {
       return {
         intervalMinutes: Number(s.intervalMinutes) || 0,
         glassMl: Number(s.glassMl) || 0,
+        dailyTargetMl: Number(s.dailyTargetMl) || 0,
         dueAt: typeof st.dueAt === 'string' ? st.dueAt : null,
         lastDrinkAt: typeof st.lastDrinkAt === 'string' ? st.lastDrinkAt : null,
+        intakeDate: typeof st.intakeDate === 'string' ? st.intakeDate : null,
+        intakeMl: Number(st.intakeMl) || 0,
+        timeZone: String(subsSnap.docs[0]?.data().timeZone || 'Asia/Jakarta'),
       };
     },
     async saveDrink(userId, status, log) {

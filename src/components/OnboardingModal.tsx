@@ -1,52 +1,79 @@
 import React, { useState } from 'react';
-import { Droplets, Sparkles, Check } from 'lucide-react';
+import { Droplets } from 'lucide-react';
+
+export interface OnboardingData {
+  name: string;
+  dailyTargetMl: number;
+  glassMl: number;
+  intervalMinutes: number;
+  snoozeMinutes: number;
+}
 
 interface OnboardingModalProps {
   isOpen: boolean;
-  onComplete: (data: { name: string; intervalMinutes: number; snoozeMinutes: number }) => void;
+  defaultName: string;
+  onComplete: (data: OnboardingData) => void | Promise<void>;
 }
 
-export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onComplete }) => {
-  const [name, setName] = useState('');
-  const [intervalMinutes, setIntervalMinutes] = useState(180);
+const Choice: React.FC<{
+  options: { label: string; val: number }[];
+  value: number;
+  onChange: (v: number) => void;
+}> = ({ options, value, onChange }) => (
+  <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+    {options.map((o) => (
+      <button
+        key={o.val}
+        type="button"
+        onClick={() => onChange(o.val)}
+        className={`py-2 px-1 text-center rounded-xl text-xs font-semibold border transition-colors ${
+          value === o.val
+            ? 'border-sky-500 bg-sky-50 text-sky-700 font-bold'
+            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+        }`}
+      >
+        {o.label}
+      </button>
+    ))}
+  </div>
+);
+
+// Shown once to new accounts: sets name, daily target and reminder rhythm.
+export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, defaultName, onComplete }) => {
+  const [name, setName] = useState(defaultName);
+  const [dailyTargetMl, setDailyTargetMl] = useState(2000);
+  const [glassMl, setGlassMl] = useState(250);
+  const [intervalMinutes, setIntervalMinutes] = useState(120);
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
+  const [saving, setSaving] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onComplete({
-      name: name.trim() || 'Teman Aiya',
-      intervalMinutes,
-      snoozeMinutes,
-    });
+    setSaving(true);
+    try {
+      await onComplete({ name: name.trim() || defaultName, dailyTargetMl, glassMl, intervalMinutes, snoozeMinutes });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-sky-100 text-center relative overflow-hidden">
-        {/* Soft background light */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-sky-100/60 rounded-full blur-2xl -z-10" />
-
-        {/* Icon & Hero branding */}
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-500 to-cyan-400 text-white flex items-center justify-center mx-auto mb-4 shadow-lg shadow-sky-500/25">
-          <Droplets className="w-8 h-8" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+      <div className="bg-white rounded-[2rem] max-w-md w-full max-h-[92vh] overflow-y-auto p-6 sm:p-8 shadow-2xl border border-sky-100 relative">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-500 to-cyan-400 text-white flex items-center justify-center mx-auto mb-3 shadow-lg shadow-sky-500/25">
+            <Droplets className="w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-black tracking-tight text-slate-900">Selamat datang di Aiya!</h1>
+          <p className="text-xs text-slate-500 mt-1 mb-6">Atur sebentar supaya pengingatnya pas buat kamu.</p>
         </div>
 
-        <h1 className="text-2xl font-black tracking-tight text-slate-900 mb-1">
-          AIYA
-        </h1>
-        <p className="text-sm font-semibold text-sky-700 mb-2">
-          Ingat minum, ingatkan teman.
-        </p>
-        <p className="text-xs text-slate-500 mb-6 leading-relaxed max-w-xs mx-auto">
-          Atur interval, dengarkan suara air, dan tetap terhidrasi bersama.
-        </p>
-
-        <form onSubmit={handleSubmit} className="text-left space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label htmlFor="onboardingName" className="block text-xs font-semibold text-slate-700 mb-1">
-              Nama Panggilan
+            <label htmlFor="onboardingName" className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Nama panggilan
             </label>
             <input
               id="onboardingName"
@@ -54,73 +81,76 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onComp
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Masukkan namamu"
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:border-sky-500 focus:bg-white"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Seberapa sering kamu ingin minum?
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { label: '1 Jam', val: 60 },
-                { label: '2 Jam', val: 120 },
-                { label: '3 Jam (Standar)', val: 180 },
-              ].map((item) => (
-                <button
-                  key={item.val}
-                  type="button"
-                  onClick={() => setIntervalMinutes(item.val)}
-                  className={`py-2 px-1 text-center rounded-xl text-xs font-semibold border transition-all ${
-                    intervalMinutes === item.val
-                      ? 'border-sky-500 bg-sky-50 text-sky-700 font-bold'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            <span className="block text-xs font-semibold text-slate-700 mb-1.5">Target minum per hari</span>
+            <Choice
+              value={dailyTargetMl}
+              onChange={setDailyTargetMl}
+              options={[
+                { label: '1,5 L', val: 1500 },
+                { label: '2 L', val: 2000 },
+                { label: '2,5 L', val: 2500 },
+                { label: '3 L', val: 3000 },
+              ]}
+            />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Kalau belum minum, ingatkan lagi dalam:
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { label: '5 Menit', val: 5 },
-                { label: '10 Menit (Standar)', val: 10 },
-              ].map((item) => (
-                <button
-                  key={item.val}
-                  type="button"
-                  onClick={() => setSnoozeMinutes(item.val)}
-                  className={`py-2 px-2 text-center rounded-xl text-xs font-semibold border transition-all ${
-                    snoozeMinutes === item.val
-                      ? 'border-amber-500 bg-amber-50 text-amber-800 font-bold'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            <span className="block text-xs font-semibold text-slate-700 mb-1.5">Sekali minum biasanya</span>
+            <Choice
+              value={glassMl}
+              onChange={setGlassMl}
+              options={[
+                { label: '200 ml', val: 200 },
+                { label: '250 ml', val: 250 },
+                { label: '350 ml', val: 350 },
+                { label: '500 ml', val: 500 },
+              ]}
+            />
           </div>
+
+          <div>
+            <span className="block text-xs font-semibold text-slate-700 mb-1.5">Ingatkan aku minum setiap</span>
+            <Choice
+              value={intervalMinutes}
+              onChange={setIntervalMinutes}
+              options={[
+                { label: '1 jam', val: 60 },
+                { label: '2 jam', val: 120 },
+                { label: '3 jam', val: 180 },
+              ]}
+            />
+          </div>
+
+          <div>
+            <span className="block text-xs font-semibold text-slate-700 mb-1.5">Kalau belum minum, ingatkan lagi dalam</span>
+            <Choice
+              value={snoozeMinutes}
+              onChange={setSnoozeMinutes}
+              options={[
+                { label: '5 menit', val: 5 },
+                { label: '10 menit', val: 10 },
+                { label: '15 menit', val: 15 },
+              ]}
+            />
+          </div>
+
+          <p className="text-[11px] text-slate-500 text-center">
+            Butuh sekitar {Math.ceil(dailyTargetMl / glassMl)} kali minum per hari. Semua bisa diubah lagi di Pengaturan.
+          </p>
 
           <button
             type="submit"
-            className="w-full mt-4 py-3 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-600 hover:from-sky-500 hover:to-cyan-500 text-white font-bold text-sm shadow-md shadow-sky-500/20 active:scale-[0.98] transition-all"
+            disabled={saving}
+            className="w-full py-3 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-500 hover:from-sky-500 hover:to-cyan-400 text-white font-bold text-sm shadow-md shadow-sky-500/20 active:scale-[0.98] transition-colors disabled:opacity-60"
           >
-            MULAI SEKARANG
+            {saving ? 'Menyimpan...' : 'Mulai Sekarang'}
           </button>
         </form>
-
-        <p className="text-[11px] text-slate-600 mt-4 text-center">
-          Jadwal dihitung secara dinamis dari waktu kamu menekan tombol &quot;Sudah&quot;.
-        </p>
       </div>
     </div>
   );

@@ -33,6 +33,7 @@ export interface UserSettings {
   glassMl: number; // amount added each time "Sudah Minum" is pressed, e.g. 250 ml
   soundType: SoundType;
   ringtone?: RingtoneMeta | null; // used when soundType is 'custom'
+  stopWhenTargetReached?: boolean; // no more reminders once today's target is reached
   volume: number;
   quietHoursEnabled: boolean;
   quietStart: string; // "22:00"
@@ -45,6 +46,10 @@ export interface DrinkStatus {
   lastDrinkAt: string | null; // ISO
   dueAt: string; // ISO - next scheduled drink, changes only when the user drinks
   nextAlarmAt: string; // ISO - next time the reminder sound plays (repeats every snoozeMinutes while overdue)
+  // Today's progress, kept in the cloud for the reminder server and for friends
+  intakeDate?: string; // local day 'YYYY-MM-DD'
+  intakeMl?: number;
+  targetMl?: number;
 }
 
 export interface DrinkLog {
@@ -54,6 +59,7 @@ export interface DrinkLog {
   timestamp: string; // ISO
   note?: string;
   amountMl?: number; // water drunk in this entry (older entries have none -> default glass size)
+  dayKey?: string; // local calendar day 'YYYY-MM-DD' (used to load only recent days)
 }
 
 export interface Friend {
@@ -65,6 +71,10 @@ export interface Friend {
   dueAt: string;
   lastNudgeAt: string | null;
   isMuted?: boolean;
+  // Friend's progress today (from their status)
+  intakeDate?: string;
+  intakeMl?: number;
+  targetMl?: number;
 }
 
 export interface FriendRequest {
@@ -76,6 +86,7 @@ export interface FriendRequest {
   fromAvatar: string;
   toUserId: string;
   toUsername?: string;
+  toName?: string;
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
   timestamp: string;
 }
@@ -90,4 +101,5 @@ export interface NudgeEvent {
   timestamp: string;
   message: string;
   isRead: boolean;
+  pushed?: boolean; // false until the reminder server has sent it as a push notification
 }

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   DrinkLog,
   DrinkStatus,
@@ -21,6 +21,7 @@ import {
   formatTimeHM,
   getActiveUser,
   getIntakeForDayMl,
+  localDayKey,
   getOutgoingRequests,
   getStoredAccounts,
   getStoredDrinkStatus,
@@ -32,6 +33,9 @@ import {
   logoutUser,
   markStoredNudgeAsRead,
   mergeLogs,
+  getPendingLogIds,
+  uploadPendingLog,
+  deleteStoredLog,
   NUDGE_COOLDOWN_MS,
   rejectFriendRequest,
   removeMutualFriendship,
@@ -45,6 +49,7 @@ import {
   saveStoredSettings,
   sendFriendRequest,
   deleteAccount,
+  removeOldLocalData,
 } from './utils/storage';
 import {
   playNudgeTone,
@@ -64,12 +69,13 @@ import { HomePage } from './components/HomePage';
 import { FriendsPage } from './components/FriendsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { HistoryPage } from './components/HistoryPage';
-import { OnboardingModal } from './components/OnboardingModal';
-import { CloudSyncModal } from './components/CloudSyncModal';
+import { OnboardingData, OnboardingModal } from './components/OnboardingModal';
 import {
-  firestoreAddLog,
   firestoreSubscribeDrinkStatus,
+  firestoreUpdateIntake,
   firestoreSubscribeLogs,
+  firestoreBackfillLogDayKeys,
+  HISTORY_DAYS,
   firestoreSendFriendRequest,
   firestoreSubscribeRequests,
   firestoreSubscribeOutgoingRequests,
@@ -78,11 +84,12 @@ import {
   firestoreSendNudge,
   firestoreMarkNudgeAsRead,
   firestoreSubscribeNudges,
-  firestoreRegisterAccount,
-  firestoreGetAllAccounts,
+  firestoreEnsureUserDocs,
+  firestoreGetAccount,
+  onFirebaseUser,
+  currentAuthUid,
   firestoreFindAccountByUsername,
   firestoreSubscribeFriendsLive,
-  firestoreMigrateLegacyFriends,
   firestoreRemoveFriendship,
   firestoreSaveSettings,
   firestoreUpdateAccountName,
@@ -192,7 +199,6 @@ export default function App() {
   // PWA Install Prompt State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstalledPwa, setIsInstalledPwa] = useState(false);
-  const [isCloudSyncOpen, setIsCloudSyncOpen] = useState(false);
 
   const isSoundMutedRef = useRef(false);
   useEffect(() => {
@@ -203,12 +209,41 @@ export default function App() {
   // Until then the local copy may be a placeholder (new device) or outdated.
   const [statusSynced, setStatusSynced] = useState(false);
 
+  // Firebase Auth session (signed in with a token from api/auth.ts).
+  // undefined = still restoring the saved session, null = signed out.
+  const [authUid, setAuthUid] = useState<string | null | undefined>(isFirebaseReady() ? undefined : null);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  useEffect(() => {
+    removeOldLocalData();
+    return onFirebaseUser((user) => setAuthUid(user ? user.uid : null));
+  }, []);
+  // Cloud data may only be used once Firebase knows it's this user (enforced by the Firestore rules)
+  const cloudReady = Boolean(currentUser) && isFirebaseReady() && authUid === currentUser?.id;
+
+  // Logged in here but not in Firebase (old session from before secure login, or signed out
+  // elsewhere): ask to log in again instead of showing data that can't be loaded.
+  useEffect(() => {
+    if (!currentUser || authUid === undefined || !isFirebaseReady()) return;
+    // Right after login the auth state may not have reached our listener yet: ask Firebase directly
+    const liveUid = currentAuthUid();
+    if (liveUid === currentUser.id) {
+      if (authUid !== liveUid) setAuthUid(liveUid);
+      return;
+    }
+    if (authUid !== currentUser.id) {
+      stopWaterSound();
+      logoutUser();
+      setCurrentUser(null);
+      setSessionNotice('Demi keamanan akunmu, silakan masuk lagi.');
+    }
+  }, [authUid, currentUser]);
+
   // Firestore Realtime Listeners for Cross-Device Synchronization
   useEffect(() => {
-    if (!currentUser || !isFirebaseReady()) return;
+    if (!currentUser || !cloudReady) return;
 
-    // 1. Ensure active account exists in cloud (settings/status are only created if missing)
-    firestoreRegisterAccount(currentUser, settings, drinkStatus).catch(() => {});
+    // 1. Settings/status docs exist (only created if missing; accounts are made by the server)
+    firestoreEnsureUserDocs(currentUser.id, settings, drinkStatus).catch(() => {});
 
     // 1b. Own drink status: the cloud copy is the source of truth for every device.
     //     Live, so drinking on the phone updates the laptop (and vice versa).
@@ -225,34 +260,6 @@ export default function App() {
       saveStoredDrinkStatus(synced, currentUser.id, 'none');
       setStatusSynced(true);
     });
-
-    // 2. Load all registered accounts from Firestore to enable friend discovery across devices
-    firestoreGetAllAccounts().then((cloudAccounts) => {
-      if (cloudAccounts && cloudAccounts.length > 0) {
-        const local = getStoredAccounts();
-        const mergedMap = new Map<string, UserAccount>();
-        local.forEach((a) => mergedMap.set(a.id, a));
-        cloudAccounts.forEach((a) => {
-          // If there was an old local dummy account with same username, deduplicate
-          for (const [k, v] of mergedMap.entries()) {
-            if (v.username.toLowerCase() === a.username.toLowerCase() && v.id !== a.id) {
-              mergedMap.delete(k);
-            }
-          }
-          mergedMap.set(a.id, a);
-        });
-        const merged = Array.from(mergedMap.values());
-        saveStoredAccounts(merged);
-        setAllAccounts(getStoredAccounts()); // getStoredAccounts filters removed demo accounts
-
-        // Align currentUser with official cloud ID if needed
-        const cloudMe = cloudAccounts.find(a => a.username.toLowerCase() === currentUser.username.toLowerCase());
-        if (cloudMe && cloudMe.id !== currentUser.id) {
-          setCurrentUser(cloudMe);
-          setActiveSessionUserId(cloudMe.id);
-        }
-      }
-    }).catch(() => {});
 
     // 2b. Live settings from cloud so changes made on another device (e.g. a new ringtone) apply here
     const unsubSettings = firestoreSubscribeSettings(currentUser.id, (cloudSettings) => {
@@ -278,23 +285,6 @@ export default function App() {
     // 2b'. Keep this device registered for background (push) reminders if already allowed
     syncPush(currentUser.id).catch(() => {});
 
-    // 2c. Live drink history from cloud (drinks from other devices show up immediately).
-    //     On the first load, upload any entries that only exist on this device.
-    let logsUploaded = false;
-    const unsubLogs = firestoreSubscribeLogs(currentUser.id, (cloudLogs) => {
-      const local = getStoredLogs(currentUser.id);
-      if (!logsUploaded) {
-        logsUploaded = true;
-        const cloudIds = new Set(cloudLogs.map((l) => l.id));
-        local
-          .filter((l) => !cloudIds.has(l.id))
-          .forEach((l) => firestoreAddLog({ ...l, userId: currentUser.id }).catch(() => {}));
-      }
-      const merged = mergeLogs(cloudLogs, local);
-      saveStoredLogs(merged, currentUser.id);
-      setLogs(merged);
-    });
-
     // 3. Listen to incoming friend requests in real-time
     const unsubRequests = firestoreSubscribeRequests(currentUser, (cloudReqs) => {
       setFriendRequests(cloudReqs);
@@ -308,7 +298,6 @@ export default function App() {
 
     // 5. Listen to shared friendships (single source of truth for BOTH users)
     //    + each friend's live drink status from cloud
-    firestoreMigrateLegacyFriends(currentUser.id, currentUser.username).catch(() => {});
     const unsubFriends = firestoreSubscribeFriendsLive(currentUser.id, (liveFriends) => {
       const previous = getStoredFriends(currentUser.id); // keeps local prefs (mute, nudge cooldown)
       const knownAccounts = getStoredAccounts();
@@ -327,6 +316,9 @@ export default function App() {
           dueAt: status?.dueAt || old?.dueAt || new Date().toISOString(),
           lastNudgeAt: old?.lastNudgeAt ?? null,
           isMuted: old?.isMuted,
+          intakeDate: status?.intakeDate,
+          intakeMl: status?.intakeMl,
+          targetMl: status?.targetMl,
         };
       });
       setFriends(built);
@@ -350,14 +342,13 @@ export default function App() {
     return () => {
       window.clearTimeout(statusFallback);
       if (unsubStatus) unsubStatus();
-      if (unsubLogs) unsubLogs();
       if (unsubSettings) unsubSettings();
       if (unsubRequests) unsubRequests();
       if (unsubOutgoing) unsubOutgoing();
       if (unsubFriends) unsubFriends();
       if (unsubNudges) unsubNudges();
     };
-  }, [currentUser]);
+  }, [currentUser, cloudReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Detect PWA installability
   useEffect(() => {
@@ -438,10 +429,13 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     stopWaterSound();
-    // This device should stop receiving background reminders for the account
-    disablePush().catch(() => {});
-    logoutUser();
+    // This device should stop receiving background reminders for the account.
+    // Remove the subscription while still signed in (the rules need the session), then sign out.
+    setActiveSessionUserId(null);
     setCurrentUser(null);
+    disablePush()
+      .catch(() => {})
+      .finally(() => logoutUser());
   }, []);
 
   const handleDeleteAccount = useCallback(async (password: string): Promise<{ success: boolean; message: string }> => {
@@ -518,6 +512,58 @@ export default function App() {
     }
   }, []);
 
+  // Today's progress (shown on Home, and kept on the cloud status for the reminder server and friends)
+  const todayKey = localDayKey(currentTimeMs);
+  const todayIntakeMl = useMemo(() => getIntakeForDayMl(logs, currentTimeMs), [logs, todayKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const targetReachedToday = todayIntakeMl >= settings.dailyTargetMl;
+  const lastSyncedIntakeRef = useRef('');
+  useEffect(() => {
+    if (!currentUser || !cloudReady) return;
+    const intake = { intakeDate: todayKey, intakeMl: todayIntakeMl, targetMl: settings.dailyTargetMl };
+    const sig = `${currentUser.id}|${intake.intakeDate}|${intake.intakeMl}|${intake.targetMl}`;
+    if (sig === lastSyncedIntakeRef.current) return;
+    lastSyncedIntakeRef.current = sig;
+    firestoreUpdateIntake(currentUser.id, intake).catch(() => {});
+  }, [currentUser, todayKey, todayIntakeMl, settings.dailyTargetMl, cloudReady]);
+
+  // Live drink history (last 30 days): the cloud is the source of truth, so drinks and
+  // deletions from other devices show up immediately. Entries made here that haven't
+  // reached the cloud yet ("pending") are kept and uploaded; anything else missing was
+  // deleted elsewhere. Re-subscribes at midnight so the 30-day window moves along.
+  useEffect(() => {
+    if (!currentUser || !cloudReady) return;
+    const uid = currentUser.id;
+
+    const backfillFlag = `aiya_logs_daykey_v1_${uid}`;
+    try {
+      if (!localStorage.getItem(backfillFlag)) {
+        firestoreBackfillLogDayKeys(uid, localDayKey)
+          .then(() => localStorage.setItem(backfillFlag, '1'))
+          .catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+
+    const days = Array.from({ length: HISTORY_DAYS }, (_, i) => localDayKey(Date.now() - i * 86400000));
+    let pendingRetried = false;
+    const unsub = firestoreSubscribeLogs(uid, days, (cloudLogs) => {
+      const cloudIds = new Set(cloudLogs.map((l) => l.id));
+      const pendingIds = getPendingLogIds(uid);
+      const pendingLocal = getStoredLogs(uid).filter((l) => pendingIds.has(l.id) && !cloudIds.has(l.id));
+      if (!pendingRetried) {
+        pendingRetried = true;
+        pendingLocal.forEach((l) => uploadPendingLog({ ...l, userId: uid }, uid).catch(() => {}));
+      }
+      const merged = mergeLogs(cloudLogs, pendingLocal);
+      saveStoredLogs(merged, uid);
+      setLogs(merged);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentUser, todayKey, cloudReady]);
+
   const isInQuietHours = useCallback((nowMs: number) => {
     if (!settings.quietHoursEnabled) return false;
     const now = new Date(nowMs);
@@ -539,11 +585,13 @@ export default function App() {
   const ringReminder = useCallback((nowMs: number) => {
     const inQuiet = isInQuietHours(nowMs);
     if (inQuiet) return;
+    // Optional: stay quiet once today's target is reached
+    if (settings.stopWhenTargetReached && targetReachedToday) return;
     if (!isSoundMuted) {
       playConfiguredReminder(settings);
     }
     showSystemNotification('Aiya: Waktunya Minum!', 'Yuk minum air dulu, lalu tekan "Sudah Minum".', 'aiya-drink', true);
-  }, [isInQuietHours, isSoundMuted, settings]);
+  }, [isInQuietHours, isSoundMuted, settings, targetReachedToday]);
 
   // Reminder loop: when the reminder time is reached, ring, then repeat every
   // snoozeMinutes until the user presses "Sudah Minum Sekarang".
@@ -566,12 +614,17 @@ export default function App() {
     saveStoredDrinkStatus(updated, currentUser.id, 'nextAlarm');
   }, [currentUser, currentTimeMs, drinkStatus, settings, ringReminder, statusSynced]);
 
-  // Handler: "Sudah Minum Sekarang" -> stops reminders, schedules next drink
-  const handleDrinkNow = useCallback(() => {
+  // Last recorded drink, so the user can undo an accidental press
+  const [undoInfo, setUndoInfo] = useState<{ logId: string; prevStatus: DrinkStatus } | null>(null);
+
+  // Handler: "Sudah Minum Sekarang" -> stops reminders, schedules next drink.
+  // amountMl: optional quick-pick amount; defaults to the user's glass size.
+  const handleDrinkNow = useCallback((amountMl?: unknown) => {
     if (!currentUser) return;
     stopWaterSound();
     playSuccessChime();
 
+    const amount = typeof amountMl === 'number' && amountMl > 0 ? amountMl : settings.glassMl;
     const wasDue = currentTimeMs >= new Date(drinkStatus.dueAt).getTime();
     const nowIso = new Date(currentTimeMs).toISOString();
     const nextTimeIso = new Date(currentTimeMs + settings.intervalMinutes * 60 * 1000).toISOString();
@@ -583,6 +636,7 @@ export default function App() {
       nextAlarmAt: nextTimeIso,
     };
 
+    const prevStatus = drinkStatus;
     setDrinkStatus(newStatus);
     saveStoredDrinkStatus(newStatus, currentUser.id);
 
@@ -590,13 +644,35 @@ export default function App() {
       userId: currentUser.id,
       action: wasDue ? 'SUDAH' : 'MANUAL',
       timestamp: nowIso,
-      amountMl: settings.glassMl,
+      amountMl: amount,
       note: wasDue ? 'Minum setelah pengingat berbunyi' : 'Minum sebelum waktu pengingat',
     }, currentUser.id);
     setLogs((prev) => [newLog, ...prev]);
 
-    setLastFeedbackMessage(`+${settings.glassMl} ml tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
+    setUndoInfo({ logId: newLog.id, prevStatus });
+    setLastFeedbackMessage(`+${amount} ml tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
   }, [currentTimeMs, currentUser, drinkStatus, settings]);
+
+  // "Batalkan": removes the last drink and puts the schedule back as it was
+  const handleUndoLastDrink = useCallback(() => {
+    if (!currentUser || !undoInfo) return;
+    const { logId, prevStatus } = undoInfo;
+    setUndoInfo(null);
+    deleteStoredLog(logId, currentUser.id).catch(() => {});
+    setLogs((prev) => prev.filter((l) => l.id !== logId));
+    setDrinkStatus(prevStatus);
+    saveStoredDrinkStatus(prevStatus, currentUser.id);
+    setLastFeedbackMessage(null);
+  }, [currentUser, undoInfo]);
+
+  // Delete any entry from Riwayat (schedule stays as it is)
+  const handleDeleteLog = useCallback(async (logId: string) => {
+    if (!currentUser) return;
+    setLogs((prev) => prev.filter((l) => l.id !== logId));
+    if (undoInfo?.logId === logId) setUndoInfo(null);
+    const ok = await deleteStoredLog(logId, currentUser.id);
+    if (!ok) alert('Gagal menghapus dari database. Periksa koneksi lalu coba lagi.');
+  }, [currentUser, undoInfo]);
 
   // Test the reminder sound + notification without changing the schedule
   const handleTriggerAlarmNow = useCallback(() => {
@@ -730,9 +806,11 @@ export default function App() {
       }
     }
 
-    // Refresh outgoing requests & friends
-    setOutgoingRequests(getOutgoingRequests(currentUser.id));
-    setFriends(getStoredFriends(currentUser.id));
+    // Offline mode only: in cloud mode the live listeners update requests and friends
+    if (!isFirebaseReady()) {
+      setOutgoingRequests(getOutgoingRequests(currentUser.id));
+      setFriends(getStoredFriends(currentUser.id));
+    }
     return res;
   }, [currentUser]);
 
@@ -750,12 +828,7 @@ export default function App() {
     );
 
     if (!requester && isFirebaseReady()) {
-      const cloudAccounts = await firestoreGetAllAccounts();
-      requester = cloudAccounts.find(
-        (a) =>
-          a.id === req.fromUserId ||
-          (req.fromUsername && a.username.toLowerCase() === req.fromUsername.toLowerCase())
-      );
+      requester = (await firestoreGetAccount(req.fromUserId)) || undefined;
       if (requester) {
         accounts = [...accounts.filter((a) => a.id !== requester!.id), requester];
         saveStoredAccounts(accounts);
@@ -774,6 +847,15 @@ export default function App() {
         alert('Gagal menyimpan pertemanan ke cloud. Periksa koneksi lalu coba lagi.');
         return;
       }
+    }
+
+    if (isFirebaseReady()) {
+      // Cloud mode: the friends list comes from the live friendships listener (with the
+      // friend's real status). Writing a local copy here would overwrite it with stale data.
+      setFriendRequests((prev) => prev.filter((r) => r.id !== reqId));
+      setNudgeSuccessBanner(`${requester.name} sekarang telah resmi menjadi temanmu!`);
+      setTimeout(() => setNudgeSuccessBanner(null), 3500);
+      return;
     }
 
     const res = acceptFriendRequest(currentUser, reqId, req, requester);
@@ -850,23 +932,19 @@ export default function App() {
   }, [currentUser, settings]);
 
   // Complete onboarding
-  const handleCompleteOnboarding = (data: { name: string; intervalMinutes: number; snoozeMinutes: number }) => {
+  // First-run setup for new accounts: saved to the cloud like any other settings change
+  const handleCompleteOnboarding = async (data: OnboardingData) => {
     if (!currentUser) return;
-    const updated: UserSettings = {
-      ...settings,
-      name: data.name,
-      intervalMinutes: data.intervalMinutes,
-      snoozeMinutes: data.snoozeMinutes,
-      isOnboarded: true,
-    };
-    setSettings(updated);
-    saveStoredSettings(updated, currentUser.id);
-
-    const nowIso = new Date(currentTimeMs).toISOString();
+    const res = await handleUpdateSettings({ ...data, isOnboarded: true });
+    if (!res.success) {
+      alert(res.message || 'Gagal menyimpan. Periksa koneksi lalu coba lagi.');
+      return;
+    }
+    // First reminder one interval from now (no drink recorded yet)
     const nextIso = new Date(currentTimeMs + data.intervalMinutes * 60 * 1000).toISOString();
     const newStatus: DrinkStatus = {
-      userId: updated.userId,
-      lastDrinkAt: nowIso,
+      userId: currentUser.id,
+      lastDrinkAt: drinkStatus.lastDrinkAt,
       dueAt: nextIso,
       nextAlarmAt: nextIso,
     };
@@ -874,19 +952,28 @@ export default function App() {
     saveStoredDrinkStatus(newStatus, currentUser.id);
   };
 
+  // Restoring the saved Firebase session (usually a split second)
+  if (currentUser && authUid === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center relative">
+        <WaterBackground />
+        <div className="flex flex-col items-center gap-3 text-sky-700">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-sky-500 to-cyan-400 animate-pulse" />
+          <span className="text-sm font-semibold">Memuat Aiya...</span>
+        </div>
+      </div>
+    );
+  }
+
   // If user is not authenticated, display the Register/Login page!
   if (!currentUser) {
     return (
       <>
         <AuthPage
-          onAuthSuccess={handleAuthSuccess}
-          onOpenCloudSync={() => setIsCloudSyncOpen(true)}
-        />
-        <CloudSyncModal
-          isOpen={isCloudSyncOpen}
-          onClose={() => setIsCloudSyncOpen(false)}
-          onConfigUpdated={() => {
-            setAllAccounts(getStoredAccounts());
+          notice={sessionNotice}
+          onAuthSuccess={(account) => {
+            setSessionNotice(null);
+            handleAuthSuccess(account);
           }}
         />
       </>
@@ -924,12 +1011,16 @@ export default function App() {
             settings={settings}
             drinkStatus={drinkStatus}
             currentTimeMs={currentTimeMs}
-            todayIntakeMl={getIntakeForDayMl(logs, currentTimeMs)}
+            todayIntakeMl={todayIntakeMl}
             onDrinkNow={handleDrinkNow}
             onTriggerAlarmNow={handleTriggerAlarmNow}
             onFastForward={handleFastForward}
             lastFeedbackMessage={lastFeedbackMessage}
-            onClearFeedback={() => setLastFeedbackMessage(null)}
+            onClearFeedback={() => {
+              setLastFeedbackMessage(null);
+              setUndoInfo(null);
+            }}
+            onUndoLastDrink={undoInfo ? handleUndoLastDrink : undefined}
           />
         )}
 
@@ -957,6 +1048,7 @@ export default function App() {
             dailyTargetMl={settings.dailyTargetMl}
             currentTimeMs={currentTimeMs}
             onAddManualLog={handleDrinkNow}
+            onDeleteLog={handleDeleteLog}
           />
         )}
 
@@ -974,16 +1066,8 @@ export default function App() {
       {/* Onboarding Dialog if not completed */}
       <OnboardingModal
         isOpen={!settings.isOnboarded}
+        defaultName={currentUser.name}
         onComplete={handleCompleteOnboarding}
-      />
-
-      {/* Cloud Database Sync Modal (Firebase Firestore) */}
-      <CloudSyncModal
-        isOpen={isCloudSyncOpen}
-        onClose={() => setIsCloudSyncOpen(false)}
-        onConfigUpdated={() => {
-          setAllAccounts(getStoredAccounts());
-        }}
       />
     </div>
   );

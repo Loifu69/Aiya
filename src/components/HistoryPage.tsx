@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CalendarDays, Droplet, Flame, History, Plus, Target, TrendingUp } from 'lucide-react';
+import { CalendarDays, Droplet, Flame, History, Plus, Target, Trash2, TrendingUp } from 'lucide-react';
 import { DrinkLog } from '../types';
 import { formatTimeHM, logAmountMl } from '../utils/storage';
 
@@ -8,6 +8,7 @@ interface HistoryPageProps {
   dailyTargetMl: number;
   currentTimeMs: number;
   onAddManualLog: () => void;
+  onDeleteLog: (logId: string) => void;
 }
 
 // Bar color validated (dataviz validator) for both light and dark surfaces, so it is a
@@ -32,7 +33,7 @@ function niceMax(value: number): number {
   return Math.max(step, Math.ceil(value / step) * step);
 }
 
-export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, dailyTargetMl, currentTimeMs, onAddManualLog }) => {
+export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, dailyTargetMl, currentTimeMs, onAddManualLog, onDeleteLog }) => {
   const [activeBar, setActiveBar] = useState<number | null>(null);
   const target = Math.max(1, dailyTargetMl);
 
@@ -88,7 +89,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, dailyTargetMl, c
             </div>
           </div>
           <button
-            onClick={onAddManualLog}
+            onClick={() => onAddManualLog()}
             className="flex items-center gap-1.5 px-3 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl text-xs font-bold transition-colors shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -241,9 +242,24 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, dailyTargetMl, c
                           </div>
                           {log.note && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{log.note}</p>}
                         </div>
-                        <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums shrink-0">
-                          {formatTimeHM(log.timestamp)}
-                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-xs font-mono font-semibold text-slate-700 tabular-nums">
+                            {formatTimeHM(log.timestamp)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Hapus catatan minum jam ${formatTimeHM(log.timestamp)} (+${formatMl(logAmountMl(log))} ml)?`)) {
+                                onDeleteLog(log.id);
+                              }
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            aria-label="Hapus catatan ini"
+                            title="Hapus catatan ini"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </li>
                   ))}

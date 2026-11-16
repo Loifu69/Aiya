@@ -31,6 +31,7 @@ Perintah lain:
 
 - `npm run build`: build produksi ke folder `dist/`
 - `npm run lint`: cek tipe TypeScript
+- `npm test`: jalankan tes otomatis (Vitest) untuk logika password, jadwal, riwayat, dan server pengingat
 
 ## Struktur
 
@@ -44,7 +45,11 @@ src/
   utils/audio.ts       Suara air dan nada notifikasi
   utils/push.ts        Daftar/hapus push notification per perangkat
 api/
+  auth.ts              Daftar, login, ganti password, hapus akun (cek password di server)
+  drink.ts             Catat minum dari tombol "Sudah Minum" di notifikasi
   send-reminders.ts    Endpoint Vercel yang mengirim pengingat (dipanggil cron tiap menit)
+firestore.rules        Aturan keamanan Firestore (dipasang lewat Firebase Console)
+tests/                 Tes otomatis (Vitest)
 public/                Manifest PWA, service worker, ikon
 ```
 
@@ -62,7 +67,23 @@ public/                Manifest PWA, service worker, ikon
 | `nudges` | Pengingat yang dikirim antar teman |
 | `pushSubscriptions` | Alamat push tiap perangkat yang mengaktifkan pengingat latar belakang |
 
-Login cukup pakai username dan password, tanpa Firebase Auth. Password tidak pernah disimpan dalam bentuk asli. Akun lama yang masih menyimpan password polos otomatis dipindahkan ke `credentials` saat dibuka.
+## Login & keamanan
+
+Login tetap pakai username dan password. Password dicek di server (`api/auth.ts`) dan hanya disimpan sebagai hash bergaram di `credentials`. Setelah password cocok, server memberi token Firebase sehingga aplikasi masuk ke **Firebase Authentication** dengan id user Aiya. `firestore.rules` lalu membatasi akses:
+
+- tiap user hanya bisa membaca/mengubah datanya sendiri (pengaturan, status, riwayat, nada, perangkat push);
+- teman hanya bisa membaca status minum temannya;
+- `credentials` dan `usernames` tertutup untuk aplikasi (hanya server);
+- tidak bisa melihat daftar semua akun, hanya mencari satu username.
+
+Untuk menjalankan login di lokal (`npm run dev`), isi `FIREBASE_SERVICE_ACCOUNT` di `.env.local` (satu baris JSON). Endpoint `/api/*` ikut berjalan di server dev.
+
+### Memasang rules (sekali, setelah versi dengan login server ter-deploy)
+
+1. Pastikan **Authentication** sudah diaktifkan (Firebase Console → Authentication → Get started).
+2. Deploy dulu versi aplikasi ini ke Vercel dan pastikan login berjalan.
+3. Firebase Console → **Firestore Database** → tab **Rules** → hapus isinya, tempel isi `firestore.rules` → **Publish**.
+4. Semua perangkat akan diminta **masuk lagi** sekali.
 
 ## Pengingat saat aplikasi ditutup (setup sekali)
 
