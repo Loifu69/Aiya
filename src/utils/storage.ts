@@ -300,11 +300,23 @@ export function saveStoredSettings(settings: UserSettings, targetUserId?: string
   }
 }
 
+// The reminder is due once both the drink schedule and the snooze time have passed. A snooze
+// time earlier than dueAt is stale (written by a device that hadn't seen the latest drink yet).
+// Without a valid schedule it is never due: better a missed ring than a ring from bad data.
+export function isAlarmDue(status: { dueAt?: string; nextAlarmAt?: string }, nowMs: number): boolean {
+  const dueMs = Date.parse(status.dueAt ?? '');
+  if (!Number.isFinite(dueMs)) return false;
+  const snoozeMs = Date.parse(status.nextAlarmAt ?? '');
+  return nowMs >= Math.max(dueMs, Number.isFinite(snoozeMs) ? snoozeMs : dueMs);
+}
+
 export function getStoredDrinkStatus(targetUserId?: string): DrinkStatus {
   const uid = targetUserId || getActiveSessionUserId() || 'user-001';
   try {
     const raw = localStorage.getItem(`aiya_status_${uid}`);
-    if (raw) return JSON.parse(raw);
+    const saved = raw ? JSON.parse(raw) : null;
+    // Only a copy with a real schedule; a damaged one falls through to the placeholder
+    if (typeof saved?.dueAt === 'string' && Number.isFinite(Date.parse(saved.dueAt))) return saved;
   } catch {
     // fallback
   }

@@ -4,6 +4,7 @@ import {
   computeFriendStatus,
   formatRemainingTime,
   getIntakeForDayMl,
+  isAlarmDue,
   localDayKey,
   logAmountMl,
   mergeLogs,
@@ -65,5 +66,26 @@ describe('formatRemainingTime', () => {
     const r = formatRemainingTime(target, at('2026-11-16T13:20:00'));
     expect(r.isOverdue).toBe(true);
     expect(r.text).toBe('Terlambat 1 jam 20 menit');
+  });
+});
+
+describe('isAlarmDue', () => {
+  const now = at('2026-11-16T16:31:00+07:00');
+  const iso = (s: string) => new Date(s).toISOString();
+
+  it('rings only after both the schedule and the snooze time', () => {
+    expect(isAlarmDue({ dueAt: iso('2026-11-16T16:00:00+07:00'), nextAlarmAt: iso('2026-11-16T16:30:00+07:00') }, now)).toBe(true);
+    expect(isAlarmDue({ dueAt: iso('2026-11-16T16:00:00+07:00'), nextAlarmAt: iso('2026-11-16T16:35:00+07:00') }, now)).toBe(false);
+  });
+
+  it('ignores a stale snooze time before the schedule', () => {
+    expect(isAlarmDue({ dueAt: iso('2026-11-16T18:40:00+07:00'), nextAlarmAt: iso('2026-11-16T16:15:00+07:00') }, now)).toBe(false);
+  });
+
+  it('never rings without a valid schedule (partial doc seen on startup)', () => {
+    expect(isAlarmDue({}, now)).toBe(false);
+    expect(isAlarmDue({ nextAlarmAt: iso('2026-11-16T16:00:00+07:00') }, now)).toBe(false);
+    expect(isAlarmDue({ dueAt: 'rusak', nextAlarmAt: 'rusak' }, now)).toBe(false);
+    expect(isAlarmDue({ dueAt: iso('2026-11-16T16:00:00+07:00'), nextAlarmAt: 'rusak' }, now)).toBe(true);
   });
 });

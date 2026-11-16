@@ -50,6 +50,7 @@ import {
   sendFriendRequest,
   deleteAccount,
   removeOldLocalData,
+  isAlarmDue,
 } from './utils/storage';
 import {
   playNudgeTone,
@@ -120,15 +121,6 @@ function getInitialTab(): NavTab {
 // Show an OS notification. Prefers the Service Worker (required on Android Chrome,
 // more reliable when the tab is in the background), falls back to new Notification().
 // Drink reminders get two buttons ("Sudah Minum" / "Tutup"), handled in public/sw.js.
-// The reminder is due once both the drink schedule and the snooze time have passed. A snooze
-// time earlier than dueAt is stale (written by a device that hadn't seen the latest drink yet).
-function isAlarmDue(status: { dueAt: string; nextAlarmAt: string }, nowMs: number): boolean {
-  const times = [status.dueAt, status.nextAlarmAt]
-    .map((t) => new Date(t).getTime())
-    .filter((t) => Number.isFinite(t));
-  return times.length === 0 || nowMs >= Math.max(...times);
-}
-
 // Short description of this device, saved with each reminder ("Windows app", "Android tab", ...)
 function deviceLabel(): string {
   const ua = navigator.userAgent;

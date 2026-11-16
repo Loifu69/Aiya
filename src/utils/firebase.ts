@@ -293,13 +293,18 @@ export async function firestoreUpdateIntake(
   }
 }
 
+export function hasValidSchedule(status: Partial<DrinkStatus> | null | undefined): status is DrinkStatus {
+  return typeof status?.dueAt === 'string' && Number.isFinite(Date.parse(status.dueAt));
+}
+
 // Reads the status straight from the server (not a cached copy). null if offline/failed.
 export async function firestoreFetchDrinkStatus(userId: string): Promise<DrinkStatus | null> {
   const { db } = initFirebase();
   if (!db) return null;
   try {
     const snap = await getDocFromServer(doc(db, 'statuses', userId));
-    return snap.exists() ? (snap.data() as DrinkStatus) : null;
+    const data = snap.exists() ? (snap.data() as DrinkStatus) : null;
+    return hasValidSchedule(data) ? data : null;
   } catch {
     return null;
   }
@@ -315,9 +320,12 @@ export function firestoreSubscribeDrinkStatus(
   return onSnapshot(
     doc(db, 'statuses', userId),
     (snap) => {
-      if (snap.exists()) {
-        onChange(snap.data() as DrinkStatus);
-      }
+      if (!snap.exists()) return;
+      const data = snap.data() as DrinkStatus;
+      // A local write (e.g. today's intake merged in on startup) can show up before the
+      // server copy, as a partial doc without a schedule. Wait for the real one.
+      if (!hasValidSchedule(data)) return;
+      onChange(data);
     },
     (err) => console.warn('Status snapshot listener:', err)
   );
