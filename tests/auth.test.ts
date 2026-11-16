@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync, verify } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import * as auth from '../api/auth';
 import { hashPassword as clientHash, createCredential as clientCredential } from '../src/utils/password';
@@ -67,5 +68,51 @@ describe('POST /api/auth', () => {
   it('requires a session for change-password and delete-account', async () => {
     expect((await post({ action: 'change-password', currentPassword: 'a', newPassword: 'b' })).status).toBe(401);
     expect((await post({ action: 'delete-account', password: 'a' })).status).toBe(401);
+  });
+});
+
+describe('Firebase tokens without firebase-admin/auth', () => {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const sa = {
+    project_id: 'aiya-test',
+    client_email: 'svc@aiya-test.iam.gserviceaccount.com',
+    private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  };
+  const pub = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const now = Date.parse('2026-11-16T01:00:00Z');
+  const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString());
+
+  // An ID token shaped like the ones Firebase issues, signed with our test key
+  const idToken = (claims: Record<string, unknown>, kid = 'k1') => {
+    const h = Buffer.from(JSON.stringify({ alg: 'RS256', kid })).toString('base64url');
+    const p = Buffer.from(JSON.stringify(claims)).toString('base64url');
+    const s = createSign('RSA-SHA256').update(`${h}.${p}`).sign(sa.private_key).toString('base64url');
+    return `${h}.${p}.${s}`;
+  };
+  const good = {
+    aud: 'aiya-test',
+    iss: 'https://securetoken.google.com/aiya-test',
+    sub: 'user-1',
+    iat: now / 1000 - 60,
+    exp: now / 1000 + 3000,
+  };
+
+  it('signs a custom token Firebase accepts', () => {
+    const [h, p, sig] = auth.signCustomToken(sa, 'user-1', now).split('.');
+    expect(decode(h)).toEqual({ alg: 'RS256', typ: 'JWT' });
+    expect(decode(p)).toMatchObject({ uid: 'user-1', iss: sa.client_email, sub: sa.client_email, exp: now / 1000 + 3600 });
+    expect(verify('RSA-SHA256', Buffer.from(`${h}.${p}`), pub, Buffer.from(sig, 'base64url'))).toBe(true);
+  });
+
+  it('accepts a valid ID token and rejects bad ones', () => {
+    const certs = { k1: pub };
+    expect(auth.checkIdToken(idToken(good), 'aiya-test', certs, now)).toBe('user-1');
+    expect(() => auth.checkIdToken(idToken(good, 'other'), 'aiya-test', certs, now)).toThrow();
+    expect(() => auth.checkIdToken(idToken({ ...good, aud: 'x' }), 'aiya-test', certs, now)).toThrow();
+    expect(() => auth.checkIdToken(idToken({ ...good, exp: now / 1000 - 1 }), 'aiya-test', certs, now)).toThrow();
+    const t = idToken(good).split('.');
+    const forged = Buffer.from(JSON.stringify({ ...good, sub: 'user-2' })).toString('base64url');
+    expect(() => auth.checkIdToken(`${t[0]}.${forged}.${t[2]}`, 'aiya-test', certs, now)).toThrow();
+    expect(() => auth.checkIdToken('nope', 'aiya-test', certs, now)).toThrow();
   });
 });

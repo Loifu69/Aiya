@@ -12,9 +12,8 @@
 // Env: FIREBASE_SERVICE_ACCOUNT. Hashing matches src/utils/password.ts (salted SHA-256, 2000 rounds).
 
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firestore';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createPublicKey, createSign, randomBytes, timingSafeEqual, verify as verifySignature } from 'node:crypto';
 
 // ----------------- Password hashing (same algorithm as the app) -----------------
 
@@ -119,13 +118,101 @@ export function newAccountDocs(username: string, nowMs: number) {
 type Result = { status: number; body: Record<string, unknown> };
 const fail = (status: number, message: string): Result => ({ status, body: { ok: false, message } });
 
-function admin() {
-  if (getApps().length === 0) {
-    const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-    if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT is not set');
-    initializeApp({ credential: cert(JSON.parse(raw)) });
+// ----------------- Firebase Auth tokens -----------------
+// Done by hand with node:crypto instead of 'firebase-admin/auth': that module loads an ESM-only
+// dependency (jose) with require(), which crashes the function on Vercel before it can run.
+
+interface ServiceAccount {
+  project_id: string;
+  client_email: string;
+  private_key: string;
+}
+
+const b64url = (data: string | Buffer) => Buffer.from(data).toString('base64url');
+
+/** Custom token for signInWithCustomToken (https://firebase.google.com/docs/auth/admin/create-custom-tokens) */
+export function signCustomToken(sa: ServiceAccount, uid: string, nowMs = Date.now()): string {
+  const iat = Math.floor(nowMs / 1000);
+  const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = b64url(
+    JSON.stringify({
+      iss: sa.client_email,
+      sub: sa.client_email,
+      aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+      iat,
+      exp: iat + 3600,
+      uid,
+    })
+  );
+  const signature = createSign('RSA-SHA256').update(`${header}.${payload}`).sign(sa.private_key);
+  return `${header}.${payload}.${b64url(signature)}`;
+}
+
+const ID_TOKEN_CERTS_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+let certCache: { certs: Record<string, string>; expiresAt: number } | null = null;
+
+async function idTokenCerts(): Promise<Record<string, string>> {
+  if (certCache && certCache.expiresAt > Date.now()) return certCache.certs;
+  const res = await fetch(ID_TOKEN_CERTS_URL);
+  if (!res.ok) throw new Error(`Could not load Firebase token certificates (${res.status})`);
+  const certs = (await res.json()) as Record<string, string>;
+  const maxAge = Number(/max-age=(\d+)/.exec(res.headers.get('cache-control') || '')?.[1] || 3600);
+  certCache = { certs, expiresAt: Date.now() + maxAge * 1000 };
+  return certs;
+}
+
+/** Checks a Firebase ID token (https://firebase.google.com/docs/auth/admin/verify-id-tokens) and returns its uid */
+export function checkIdToken(
+  token: string,
+  projectId: string,
+  certs: Record<string, string>,
+  nowMs = Date.now()
+): string {
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('malformed token');
+  const [h, p, sig] = parts;
+  const header = JSON.parse(Buffer.from(h, 'base64url').toString());
+  const payload = JSON.parse(Buffer.from(p, 'base64url').toString());
+  const pem = certs[header.kid];
+  if (header.alg !== 'RS256' || !pem) throw new Error('unknown signing key');
+  const ok = verifySignature('RSA-SHA256', Buffer.from(`${h}.${p}`), createPublicKey(pem), Buffer.from(sig, 'base64url'));
+  if (!ok) throw new Error('bad signature');
+  const now = Math.floor(nowMs / 1000);
+  if (payload.aud !== projectId || payload.iss !== `https://securetoken.google.com/${projectId}`) {
+    throw new Error('token is for another project');
   }
-  return { db: getFirestore(), auth: getAuth() };
+  if (typeof payload.exp !== 'number' || payload.exp <= now) throw new Error('token expired');
+  if (typeof payload.iat !== 'number' || payload.iat > now + 300) throw new Error('token issued in the future');
+  if (typeof payload.sub !== 'string' || !payload.sub) throw new Error('token has no user');
+  return payload.sub;
+}
+
+function admin() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT is not set');
+  const sa = JSON.parse(raw) as ServiceAccount;
+  if (getApps().length === 0) initializeApp({ credential: cert(JSON.parse(raw)) });
+  const credential = getApps()[0].options.credential!;
+
+  return {
+    db: getFirestore(),
+    auth: {
+      createCustomToken: async (uid: string) => signCustomToken(sa, uid),
+      verifyIdToken: async (idToken: string) => ({ uid: checkIdToken(idToken, sa.project_id, await idTokenCerts()) }),
+      deleteUser: async (uid: string) => {
+        const { access_token } = await credential.getAccessToken();
+        const res = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/projects/${sa.project_id}/accounts:delete`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ localId: uid }),
+          }
+        );
+        if (!res.ok) throw new Error(`deleteUser failed (${res.status})`);
+      },
+    },
+  };
 }
 
 async function register(body: Record<string, unknown>): Promise<Result> {
