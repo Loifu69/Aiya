@@ -111,12 +111,12 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
   return (
     <div className="space-y-6 pb-20 md:pb-8">
       {/* Top Banner & Tab switcher */}
-      <div className="bg-white rounded-3xl p-6 shadow-xs border border-slate-200">
+      <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 border border-white/80 shadow-lg shadow-sky-100/60">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <Users className="w-5 h-5 text-sky-600" />
-              <span>Daftar Teman &amp; Saling Mengingatkan</span>
+            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-3">
+              <span className="w-11 h-11 rounded-2xl bg-gradient-to-br from-sky-400 to-cyan-400 text-white flex items-center justify-center shadow-md shadow-sky-300/40 shrink-0"><Users className="w-5 h-5" /></span>
+              <span>Teman Hidrasi</span>
             </h1>
             <p className="text-xs text-slate-500 mt-1">
               Pertemanan dua arah: kirim permintaan dan tunggu persetujuan untuk saling memantau jadwal minum.
@@ -126,7 +126,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
             <button
               onClick={() => setActiveTab('list')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all cursor-pointer ${
                 activeTab === 'list'
                   ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -136,7 +136,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('requests')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all relative cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all relative cursor-pointer ${
                 activeTab === 'requests'
                   ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -151,7 +151,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('add')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all cursor-pointer ${
                 activeTab === 'add'
                   ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -175,8 +175,8 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
       {activeTab === 'list' && (
         <div className="space-y-3">
           {friends.length === 0 ? (
-            <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center space-y-3">
-              <Users className="w-10 h-10 text-slate-300 mx-auto" />
+            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 border border-white/80 shadow-lg shadow-sky-100/60 text-center space-y-3">
+              <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-sky-100 to-cyan-100 text-sky-500 flex items-center justify-center"><Users className="w-7 h-7" /></div>
               <p className="text-sm font-semibold text-slate-700">Belum ada teman terhubung</p>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
                 Kirim permintaan pertemanan ke pengguna lain. Setelah mereka menyetujui, kalian akan saling terhubung!
@@ -204,16 +204,18 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
               return (
                 <div
                   key={friend.id}
-                  className={`bg-white rounded-2xl p-4 sm:p-5 border transition-all ${
+                  className={`bg-white/80 backdrop-blur-sm rounded-3xl p-4 sm:p-5 border shadow-md shadow-sky-100/50 transition-all ${
                     status === 'TERLAMBAT'
-                      ? 'border-amber-200 shadow-xs bg-gradient-to-r from-white to-amber-50/20'
-                      : 'border-slate-200'
+                      ? 'border-amber-200 bg-gradient-to-r from-white/80 to-amber-50/60'
+                      : 'border-white/80'
                   }`}
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     {/* Friend Profile & Hydration Data */}
                     <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-full overflow-hidden bg-sky-100 border border-slate-200 shrink-0">
+                      <div className={`w-12 h-12 rounded-full overflow-hidden bg-sky-100 shrink-0 ring-[3px] ring-offset-2 ring-offset-white ${
+                        status === 'TERLAMBAT' ? 'ring-amber-400' : status === 'WAKTUNYA_MINUM' ? 'ring-sky-400' : 'ring-emerald-400'
+                      }`}>
                         <img
                           src={friend.avatar}
                           alt={friend.name}
@@ -342,7 +344,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
             </h2>
 
             {friendRequests.length === 0 ? (
-              <div className="bg-white rounded-2xl p-6 border border-slate-200 text-center space-y-1">
+              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 border border-white/80 shadow-sm text-center space-y-1">
                 <UserCheck className="w-7 h-7 text-slate-300 mx-auto" />
                 <p className="text-xs font-semibold text-slate-700">Tidak ada permintaan masuk</p>
                 <p className="text-[11px] text-slate-400">
@@ -353,7 +355,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
               friendRequests.map((req) => (
                 <div
                   key={req.id}
-                  className="bg-white rounded-2xl p-4 border border-slate-200 flex items-center justify-between gap-3 shadow-xs"
+                  className="bg-white/80 backdrop-blur-sm rounded-3xl p-4 border border-white/80 flex items-center justify-between gap-3 shadow-md shadow-sky-100/50"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-100 border border-slate-200">
@@ -437,7 +439,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
       {activeTab === 'add' && (
         <div className="space-y-6 max-w-xl mx-auto">
           {/* Add form */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs">
+          <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 border border-white/80 shadow-lg shadow-sky-100/60">
             <div className="flex items-center gap-2 mb-2">
               <UserPlus className="w-5 h-5 text-sky-600" />
               <h2 className="text-base font-bold text-slate-900">Kirim Permintaan Pertemanan</h2>
@@ -492,7 +494,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
           </div>
 
           {/* List of Registered Users */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs">
+          <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 border border-white/80 shadow-lg shadow-sky-100/60">
             <div className="flex items-center gap-2 mb-1">
               <Sparkles className="w-4 h-4 text-sky-600" />
               <h2 className="text-sm font-bold text-slate-900">

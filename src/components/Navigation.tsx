@@ -43,8 +43,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   return (
     <>
       {/* Mobile Fixed Bottom Nav */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-lg">
-        <div className="grid grid-cols-4 items-center h-16 max-w-lg mx-auto">
+      <nav className="md:hidden fixed bottom-3 left-3 right-3 z-40 rounded-3xl bg-white/85 backdrop-blur-xl border border-white/80 shadow-xl shadow-sky-200/50">
+        <div className="grid grid-cols-4 items-center h-16 max-w-lg mx-auto px-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = currentTab === tab.id;
@@ -56,18 +56,15 @@ export const Navigation: React.FC<NavigationProps> = ({
                   isActive ? 'text-sky-600 font-semibold' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                <div className="relative">
-                  <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110' : ''}`} />
+                <div className={`relative px-4 py-1 rounded-full transition-colors ${isActive ? 'bg-sky-100' : ''}`}>
+                  <Icon className="w-5 h-5" />
                   {tab.badge ? (
-                    <span className="absolute -top-1 -right-2 bg-rose-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                    <span className="absolute -top-1 right-1 bg-rose-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
                       {tab.badge}
                     </span>
                   ) : null}
                 </div>
-                <span className="text-[11px] mt-1 tracking-tight">{tab.label}</span>
-                {isActive && (
-                  <span className="absolute bottom-1 w-6 h-0.5 bg-sky-600 rounded-full" />
-                )}
+                <span className="text-[11px] mt-0.5 tracking-tight">{tab.label}</span>
               </button>
             );
           })}
@@ -75,8 +72,8 @@ export const Navigation: React.FC<NavigationProps> = ({
       </nav>
 
       {/* Desktop Horizontal Subnav */}
-      <div className="hidden md:flex justify-center border-b border-slate-200 bg-white py-2 sticky top-14 z-20">
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+      <div className="hidden md:flex justify-center border-b border-white/60 bg-white/60 backdrop-blur-md py-2 sticky top-14 z-20">
+        <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-2xl">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = currentTab === tab.id;

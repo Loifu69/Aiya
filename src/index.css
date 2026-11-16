@@ -102,3 +102,41 @@
 :root:not(.dark) {
   color-scheme: light;
 }
+
+/* ----------------- Water theme: animations ----------------- */
+
+/* Horizontal wave drift (the wave path is drawn twice as wide and slides by half) */
+@keyframes aiya-wave {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Bubbles rising and fading */
+@keyframes aiya-bubble {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  15% { opacity: 0.7; }
+  100% { transform: translateY(-140px) scale(1); opacity: 0; }
+}
+
+/* Gentle floating for decorative blobs */
+@keyframes aiya-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(12px, -18px) scale(1.05); }
+}
+
+/* A drop falling into the glass when a drink is recorded */
+@keyframes aiya-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.aiya-wave { animation: aiya-wave 7s linear infinite; }
+.aiya-wave-slow { animation: aiya-wave 11s linear infinite; }
+.aiya-bubble { animation: aiya-bubble 4.5s ease-in infinite; }
+.aiya-float { animation: aiya-float 14s ease-in-out infinite; }
+.aiya-pop { animation: aiya-pop 0.5s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aiya-wave, .aiya-wave-slow, .aiya-bubble, .aiya-float, .aiya-pop { animation: none; }
+}

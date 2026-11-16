@@ -43,9 +43,9 @@ export const BackgroundReminderCard: React.FC<BackgroundReminderCardProps> = ({ 
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-      <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-        <BellRing className="w-4 h-4 text-sky-600" />
+    <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 border border-white/80 shadow-lg shadow-sky-100/60 space-y-4">
+      <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+        <span className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-400 text-white flex items-center justify-center shadow-sm shadow-sky-300/40 shrink-0"><BellRing className="w-4 h-4" /></span>
         <h2 className="text-sm font-bold text-slate-900">Pengingat Saat Aplikasi Ditutup</h2>
       </div>
 

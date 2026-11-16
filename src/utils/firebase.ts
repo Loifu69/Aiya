@@ -867,7 +867,7 @@ export function firestoreSubscribeNudges(
 
 // ----------------- DRINK LOGS (RIWAYAT) -----------------
 
-export const MAX_LOGS = 50;
+export const MAX_LOGS = 200; // enough for the 7-day chart even with many drinks a day
 
 export async function firestoreAddLog(log: DrinkLog): Promise<void> {
   const { db } = initFirebase();

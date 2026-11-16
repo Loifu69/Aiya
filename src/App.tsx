@@ -57,6 +57,7 @@ import { disablePush, syncPush } from './utils/push';
 import { getRingtoneBuffer, playConfiguredReminder } from './utils/ringtone';
 
 import { AuthPage } from './components/AuthPage';
+import { WaterBackground } from './components/WaterDecor';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
 import { HomePage } from './components/HomePage';
@@ -893,7 +894,8 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+    <div className="min-h-screen flex flex-col font-sans relative">
+      <WaterBackground />
       {/* Top Header */}
       <Header
         currentUser={currentUser}
@@ -918,6 +920,7 @@ export default function App() {
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6">
         {currentTab === 'home' && (
           <HomePage
+            userName={currentUser.name}
             settings={settings}
             drinkStatus={drinkStatus}
             currentTimeMs={currentTimeMs}
@@ -951,6 +954,8 @@ export default function App() {
         {currentTab === 'history' && (
           <HistoryPage
             logs={logs}
+            dailyTargetMl={settings.dailyTargetMl}
+            currentTimeMs={currentTimeMs}
             onAddManualLog={handleDrinkNow}
           />
         )}

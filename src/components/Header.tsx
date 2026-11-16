@@ -20,7 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   onInstallPwa,
 }) => {
   return (
-    <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200">
+    <header className="sticky top-0 z-30 bg-white/70 backdrop-blur-xl border-b border-white/60">
       <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
         {/* Zone 1: Brand title wordmark */}
         <div className="flex items-center gap-2.5">

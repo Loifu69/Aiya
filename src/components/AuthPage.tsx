@@ -14,6 +14,7 @@ import {
 import { UserAccount } from '../types';
 import { loginAccount, registerAccount } from '../utils/storage';
 import { isFirebaseReady } from '../utils/firebase';
+import { WaterBackground } from './WaterDecor';
 
 interface AuthPageProps {
   onAuthSuccess: (account: UserAccount) => void;
@@ -67,10 +68,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
 
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-slate-50 to-slate-100 flex flex-col justify-center items-center px-4 py-8">
-      {/* Decorative ambient background blur */}
-      <div className="fixed top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-sky-200/40 rounded-full blur-3xl pointer-events-none -z-10" />
-      <div className="fixed bottom-10 right-10 w-72 h-72 bg-cyan-200/30 rounded-full blur-3xl pointer-events-none -z-10" />
+    <div className="min-h-screen relative flex flex-col justify-center items-center px-4 py-8">
+      <WaterBackground />
 
       <div className="w-full max-w-md">
         {/* Brand Header */}
@@ -81,7 +80,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
               <Droplets className="w-8 h-8" />
             </div>
           </div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">
+          <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-sky-600 to-cyan-500 bg-clip-text text-transparent">
             Aiya
           </h1>
           <p className="text-sm font-semibold text-sky-700 mt-1">
@@ -93,7 +92,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
         </div>
 
         {/* Main Auth Card */}
-        <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/60 border border-slate-200/80 relative overflow-hidden">
+        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] p-6 sm:p-8 shadow-2xl shadow-sky-200/50 border border-white/80 relative overflow-hidden">
           {/* Subtle top accent bar */}
           <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-sky-400 via-cyan-400 to-blue-500" />
 
