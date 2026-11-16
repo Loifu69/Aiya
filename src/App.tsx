@@ -207,7 +207,10 @@ export default function App() {
 
   // True once this device has the real drink status from the cloud.
   // Until then the local copy may be a placeholder (new device) or outdated.
-  const [statusSynced, setStatusSynced] = useState(false);
+  // Whose cloud status has arrived. Keyed by user id so a previous session in this tab never
+  // counts as synced for the next login (the reminder loop waits for this).
+  const [statusSyncedFor, setStatusSyncedFor] = useState<string | null>(null);
+  const statusSynced = Boolean(currentUser) && statusSyncedFor === currentUser?.id;
 
   // Firebase Auth session (signed in with a token from api/auth.ts).
   // undefined = still restoring the saved session, null = signed out.
@@ -240,15 +243,19 @@ export default function App() {
 
   // Firestore Realtime Listeners for Cross-Device Synchronization
   useEffect(() => {
-    if (!currentUser || !cloudReady) return;
+    if (!currentUser || !cloudReady) {
+      setStatusSyncedFor(null); // logged out / signing in: wait for the cloud status again
+      return;
+    }
 
     // 1. Settings/status docs exist (only created if missing; accounts are made by the server)
     firestoreEnsureUserDocs(currentUser.id, settings, drinkStatus).catch(() => {});
 
     // 1b. Own drink status: the cloud copy is the source of truth for every device.
     //     Live, so drinking on the phone updates the laptop (and vice versa).
-    setStatusSynced(false);
-    const statusFallback = window.setTimeout(() => setStatusSynced(true), 5000);
+    const syncingUid = currentUser.id;
+    setStatusSyncedFor(null);
+    const statusFallback = window.setTimeout(() => setStatusSyncedFor(syncingUid), 5000);
     const unsubStatus = firestoreSubscribeDrinkStatus(currentUser.id, (cloudStatus) => {
       const synced: DrinkStatus = {
         userId: currentUser.id,
@@ -258,7 +265,7 @@ export default function App() {
       };
       setDrinkStatus(synced);
       saveStoredDrinkStatus(synced, currentUser.id, 'none');
-      setStatusSynced(true);
+      setStatusSyncedFor(syncingUid);
     });
 
     // 2b. Live settings from cloud so changes made on another device (e.g. a new ringtone) apply here
