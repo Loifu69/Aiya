@@ -6,7 +6,7 @@ let currentWaterSource: {
   stop: () => void;
 } | null = null;
 
-function getAudioContext(): AudioContext {
+export function getAudioContext(): AudioContext {
   if (!audioCtx) {
     const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     audioCtx = new AudioContextClass();
@@ -19,6 +19,7 @@ function getAudioContext(): AudioContext {
 
 export function playWaterSound(type: SoundType = 'river', volume = 0.8) {
   stopWaterSound();
+  if (type === 'custom') type = 'river'; // custom audio goes through playAudioBuffer
 
   const ctx = getAudioContext();
   const masterGain = ctx.createGain();
@@ -249,17 +250,69 @@ export function setupAudioUnlock(): void {
   window.addEventListener('touchstart', unlock);
 }
 
-// Short reminder sound: plays the chosen water sound briefly, then stops by itself
+// Plays a decoded audio file (custom ringtone). Stopped by stopWaterSound(), like the built-in sounds.
+export function playAudioBuffer(buffer: AudioBuffer, volume = 0.8): void {
+  stopWaterSound();
+  const ctx = getAudioContext();
+  const gain = ctx.createGain();
+  gain.gain.value = Math.max(0.05, Math.min(volume, 1));
+  gain.connect(ctx.destination);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(gain);
+  source.start();
+
+  const stopper = {
+    stop: () => {
+      try {
+        gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+        setTimeout(() => {
+          try {
+            source.stop();
+          } catch {
+            // already ended
+          }
+          source.disconnect();
+          gain.disconnect();
+        }, 170);
+      } catch {
+        // ignore
+      }
+    },
+  };
+  currentWaterSource = stopper;
+  source.onended = () => {
+    if (currentWaterSource === stopper) currentWaterSource = null;
+  };
+}
+
+// Built-in sounds ring for 5 s; a custom ringtone plays up to 30 s.
+export const BUILT_IN_REMINDER_MS = 5000;
+export const CUSTOM_REMINDER_MAX_MS = 30000;
+
+// Reminder sound that stops by itself. Pass `customBuffer` to play the user's own ringtone.
 let reminderStopTimer: number | null = null;
-export function playReminderSound(type: SoundType = 'river', volume = 0.8, durationMs = 5000) {
+export function playReminderSound(
+  type: SoundType = 'river',
+  volume = 0.8,
+  durationMs?: number,
+  customBuffer?: AudioBuffer | null
+) {
   if (reminderStopTimer !== null) {
     window.clearTimeout(reminderStopTimer);
     reminderStopTimer = null;
   }
   stopWaterSound();
-  playWaterSound(type, volume);
+  let ms: number;
+  if (type === 'custom' && customBuffer) {
+    playAudioBuffer(customBuffer, volume);
+    ms = durationMs ?? Math.min(customBuffer.duration * 1000 + 200, CUSTOM_REMINDER_MAX_MS);
+  } else {
+    playWaterSound(type === 'custom' ? 'river' : type, volume);
+    ms = durationMs ?? BUILT_IN_REMINDER_MS;
+  }
   reminderStopTimer = window.setTimeout(() => {
     stopWaterSound();
     reminderStopTimer = null;
-  }, durationMs);
+  }, ms);
 }

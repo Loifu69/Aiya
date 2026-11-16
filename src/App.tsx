@@ -54,6 +54,7 @@ import {
 } from './utils/audio';
 
 import { disablePush, syncPush } from './utils/push';
+import { getRingtoneBuffer, playConfiguredReminder } from './utils/ringtone';
 
 import { AuthPage } from './components/AuthPage';
 import { Header } from './components/Header';
@@ -84,7 +85,7 @@ import {
   firestoreRemoveFriendship,
   firestoreSaveSettings,
   firestoreUpdateAccountName,
-  firestoreGetSettings,
+  firestoreSubscribeSettings,
   isFirebaseReady,
 } from './utils/firebase';
 
@@ -108,9 +109,14 @@ function getInitialTab(): NavTab {
 
 // Show an OS notification. Prefers the Service Worker (required on Android Chrome,
 // more reliable when the tab is in the background), falls back to new Notification().
-async function showSystemNotification(title: string, body: string, tag: string) {
+// Drink reminders get two buttons ("Sudah Minum" / "Tutup"), handled in public/sw.js.
+async function showSystemNotification(title: string, body: string, tag: string, isReminder = false) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const options: NotificationOptions & { vibrate?: number[]; renotify?: boolean } = {
+  const options: NotificationOptions & {
+    vibrate?: number[];
+    renotify?: boolean;
+    actions?: { action: string; title: string }[];
+  } = {
     body,
     icon: '/icon-192.png',
     badge: '/icon-192.png',
@@ -118,6 +124,15 @@ async function showSystemNotification(title: string, body: string, tag: string) 
     renotify: true,
     requireInteraction: true,
     vibrate: [300, 150, 300],
+    data: { kind: isReminder ? 'reminder' : 'other', url: '/#home' },
+    ...(isReminder
+      ? {
+          actions: [
+            { action: 'drink', title: 'Sudah Minum' },
+            { action: 'dismiss', title: 'Tutup' },
+          ],
+        }
+      : {}),
   };
   try {
     if ('serviceWorker' in navigator) {
@@ -127,7 +142,9 @@ async function showSystemNotification(title: string, body: string, tag: string) 
         return;
       }
     }
-    new Notification(title, options);
+    // Plain notifications can't have buttons (would throw), so drop them here
+    const { actions: _actions, ...plainOptions } = options;
+    new Notification(title, plainOptions);
   } catch {
     // ignore
   }
@@ -236,9 +253,9 @@ export default function App() {
       }
     }).catch(() => {});
 
-    // 2b. Load settings from cloud so changes made on another device apply here
-    firestoreGetSettings(currentUser.id).then((cloudSettings) => {
-      if (cloudSettings) {
+    // 2b. Live settings from cloud so changes made on another device (e.g. a new ringtone) apply here
+    const unsubSettings = firestoreSubscribeSettings(currentUser.id, (cloudSettings) => {
+      {
         const merged = { ...getStoredSettings(currentUser.id), ...cloudSettings, userId: currentUser.id };
         setSettings(merged);
         saveStoredSettings(merged, currentUser.id);
@@ -255,7 +272,7 @@ export default function App() {
           });
         }
       }
-    }).catch(() => {});
+    });
 
     // 2b'. Keep this device registered for background (push) reminders if already allowed
     syncPush(currentUser.id).catch(() => {});
@@ -333,6 +350,7 @@ export default function App() {
       window.clearTimeout(statusFallback);
       if (unsubStatus) unsubStatus();
       if (unsubLogs) unsubLogs();
+      if (unsubSettings) unsubSettings();
       if (unsubRequests) unsubRequests();
       if (unsubOutgoing) unsubOutgoing();
       if (unsubFriends) unsubFriends();
@@ -509,14 +527,21 @@ export default function App() {
     return curHM >= settings.quietStart && curHM <= settings.quietEnd;
   }, [settings]);
 
+  // Download/decode the custom ringtone ahead of time so it rings without delay
+  useEffect(() => {
+    if (settings.soundType === 'custom' && settings.ringtone) {
+      getRingtoneBuffer(settings.ringtone).catch(() => {});
+    }
+  }, [settings.soundType, settings.ringtone]);
+
   // Play a reminder: short sound + system notification. No confirmation popup.
   const ringReminder = useCallback((nowMs: number) => {
     const inQuiet = isInQuietHours(nowMs);
     if (inQuiet) return;
     if (!isSoundMuted) {
-      playReminderSound(settings.soundType, settings.volume);
+      playConfiguredReminder(settings);
     }
-    showSystemNotification('Aiya: Waktunya Minum!', 'Jangan lupa minum air, lalu tekan "Sudah Minum".', 'aiya-drink');
+    showSystemNotification('Aiya: Waktunya Minum!', 'Jangan lupa minum air, lalu tekan "Sudah Minum".', 'aiya-drink', true);
   }, [isInQuietHours, isSoundMuted, settings]);
 
   // Reminder loop: when the reminder time is reached, ring, then repeat every
@@ -575,10 +600,40 @@ export default function App() {
   // Test the reminder sound + notification without changing the schedule
   const handleTriggerAlarmNow = useCallback(() => {
     if (!isSoundMuted) {
-      playReminderSound(settings.soundType, settings.volume);
+      playConfiguredReminder(settings);
     }
-    showSystemNotification('Aiya: Tes Pengingat', 'Seperti inilah pengingat minum akan berbunyi.', 'aiya-test');
+    showSystemNotification('Aiya: Tes Pengingat', 'Seperti inilah pengingat minum akan berbunyi.', 'aiya-test', true);
   }, [isSoundMuted, settings]);
+
+  // Buttons on the notification (public/sw.js sends these messages):
+  // "Tutup" / swipe away -> stop the reminder sound, "Sudah Minum" -> record the drink here.
+  const handleDrinkNowRef = useRef(handleDrinkNow);
+  useEffect(() => {
+    handleDrinkNowRef.current = handleDrinkNow;
+  }, [handleDrinkNow]);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const type = event.data?.type;
+      if (type === 'aiya-stop-sound') stopWaterSound();
+      if (type === 'aiya-drink') handleDrinkNowRef.current();
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
+
+  // Opened from the notification's "Sudah Minum" while the app was closed (/?aiya-action=drink)
+  const pendingDrinkActionRef = useRef(
+    new URLSearchParams(window.location.search).get('aiya-action') === 'drink'
+  );
+  useEffect(() => {
+    if (!pendingDrinkActionRef.current || !currentUser) return;
+    if (isFirebaseReady() && !statusSynced) return; // record on top of the real cloud status
+    pendingDrinkActionRef.current = false;
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash || '#home'}`);
+    handleDrinkNowRef.current();
+  }, [currentUser, statusSynced]);
 
   // Simulator: fast forward time
   const handleFastForward = useCallback((minutes: number) => {

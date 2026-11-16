@@ -16,6 +16,7 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { sendNotification, setVapidDetails } from 'web-push';
+import { createHmac } from 'node:crypto';
 
 // ----------------- Core logic (no Firebase/Vercel dependency, easy to test) -----------------
 
@@ -48,11 +49,35 @@ export interface ReminderStore {
   deleteSubscription(id: string): Promise<void>;
 }
 
+// Signed ticket so the notification's "Sudah Minum" button can record a drink
+// via /api/drink without opening the app. Verified with the same secret in api/drink.ts.
+export interface DrinkTicket {
+  userId: string;
+  exp: number; // ms epoch
+  sig: string;
+}
+
 export interface PushPayload {
   title: string;
   body: string;
   tag: string;
   url: string;
+  drink?: DrinkTicket;
+}
+
+export type MakeTicket = (userId: string) => DrinkTicket;
+
+const TICKET_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function signTicket(secret: string, userId: string, exp: number): string {
+  return createHmac('sha256', secret).update(`${userId}.${exp}`).digest('base64url');
+}
+
+export function ticketMaker(secret: string, nowMs: number): MakeTicket {
+  return (userId) => {
+    const exp = nowMs + TICKET_TTL_MS;
+    return { userId, exp, sig: signTicket(secret, userId, exp) };
+  };
 }
 
 // Throws an error with statusCode 404/410 when the device is gone
@@ -110,7 +135,12 @@ export function buildReminderPayload(dueAtIso: string, nowMs: number): PushPaylo
   return { title: 'Aiya: Waktunya Minum!', body, tag: 'aiya-drink', url: '/#home' };
 }
 
-export async function processDueReminders(store: ReminderStore, send: SendPush, nowMs: number): Promise<RunSummary> {
+export async function processDueReminders(
+  store: ReminderStore,
+  send: SendPush,
+  nowMs: number,
+  makeTicket?: MakeTicket
+): Promise<RunSummary> {
   const summary: RunSummary = { due: 0, sent: 0, quiet: 0, noDevice: 0, removedDevices: 0, skippedChanged: 0, failed: 0 };
   const due = await store.getDueStatuses(new Date(nowMs).toISOString());
   summary.due = due.length;
@@ -141,7 +171,7 @@ export async function processDueReminders(store: ReminderStore, send: SendPush, 
         return;
       }
 
-      const payload = buildReminderPayload(status.dueAt, nowMs);
+      const payload: PushPayload = { ...buildReminderPayload(status.dueAt, nowMs), drink: makeTicket?.(status.userId) };
       let anySent = false;
       await Promise.all(
         subs.map(async (sub) => {
@@ -234,7 +264,8 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const summary = await processDueReminders(firestoreStore(), webPushSender(), Date.now());
+    const now = Date.now();
+    const summary = await processDueReminders(firestoreStore(), webPushSender(), now, ticketMaker(secret, now));
     return Response.json({ ok: true, ...summary });
   } catch (err) {
     console.error('send-reminders error:', err);

@@ -22,6 +22,7 @@ import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
 import { BackgroundReminderCard } from './BackgroundReminderCard';
 import { ThemeCard } from './ThemeCard';
+import { RingtoneOption } from './RingtoneOption';
 
 interface SettingsPageProps {
   currentUser: UserAccount;
@@ -137,6 +138,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const validate = (): string | null => {
     if (!name.trim()) return 'Nama pengguna tidak boleh kosong';
+    if (soundType === 'custom' && !settings.ringtone) return 'Unggah file nada kustom dulu, atau pilih suara lain';
     if (!dailyTargetMl || dailyTargetMl < 500) return 'Target harian minimal 500 ml';
     if (dailyTargetMl > 6000) return 'Target harian maksimal 6000 ml';
     if (!glassMl || glassMl < 50) return 'Jumlah sekali minum minimal 50 ml';
@@ -583,6 +585,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </button>
               </div>
             ))}
+
+            <RingtoneOption
+              userId={currentUser.id}
+              settings={settings}
+              selected={soundType === 'custom'}
+              volume={volume}
+              onSelect={() => setSoundType('custom')}
+              onUpdateSettings={onUpdateSettings}
+              notify={showToast}
+            />
           </div>
 
           {/* Volume slider */}

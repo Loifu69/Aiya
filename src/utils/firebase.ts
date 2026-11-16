@@ -320,6 +320,7 @@ export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
       ['nudges', 'toUserId'],
       ['drinkLogs', 'userId'],
       ['pushSubscriptions', 'userId'],
+      ['ringtoneChunks', 'userId'],
     ];
     for (const [col, field] of targets) {
       const snap = await getDocs(query(collection(db, col), where(field, '==', userId)));
@@ -948,5 +949,72 @@ export function firestoreSubscribeLogs(
       );
     },
     (err) => console.warn('Drink logs listener:', err)
+  );
+}
+
+// ----------------- CUSTOM RINGTONE (audio stored as base64 chunks) -----------------
+
+export interface RingtoneChunk {
+  userId: string;
+  ringtoneId: string;
+  index: number;
+  data: string; // base64 piece
+}
+
+export async function firestoreSaveRingtoneChunks(userId: string, ringtoneId: string, chunks: string[]): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk: RingtoneChunk = { userId, ringtoneId, index: i, data: chunks[i] };
+      await setDoc(doc(db, 'ringtoneChunks', `${ringtoneId}_${i}`), chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error('Firestore save ringtone error:', err);
+    return false;
+  }
+}
+
+export async function firestoreLoadRingtoneChunks(ringtoneId: string): Promise<string[] | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+  try {
+    const snap = await getDocs(query(collection(db, 'ringtoneChunks'), where('ringtoneId', '==', ringtoneId)));
+    if (snap.empty) return null;
+    return snap.docs
+      .map((d) => d.data() as RingtoneChunk)
+      .sort((a, b) => a.index - b.index)
+      .map((c) => c.data);
+  } catch (err) {
+    console.error('Firestore load ringtone error:', err);
+    return null;
+  }
+}
+
+export async function firestoreDeleteRingtone(ringtoneId: string): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+  try {
+    const snap = await getDocs(query(collection(db, 'ringtoneChunks'), where('ringtoneId', '==', ringtoneId)));
+    for (const d of snap.docs) await deleteDoc(d.ref);
+  } catch (err) {
+    console.error('Firestore delete ringtone error:', err);
+  }
+}
+
+// Live settings, so changes made on another device (e.g. a new ringtone) apply right away
+export function firestoreSubscribeSettings(
+  userId: string,
+  onChange: (settings: UserSettings) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+  return onSnapshot(
+    doc(db, 'settings', userId),
+    (snap) => {
+      if (snap.exists()) onChange(snap.data() as UserSettings);
+    },
+    (err) => console.warn('Settings listener:', err)
   );
 }

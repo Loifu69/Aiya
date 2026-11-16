@@ -24,7 +24,8 @@ if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
   // so code changes would not show up. Remove any worker/cache left from earlier runs.
   navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
   if ('caches' in window) {
-    caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+    // only the app-shell cache; keep the custom ringtone cache
+    caches.keys().then((keys) => keys.filter((k) => k.startsWith('aiya-pwa')).forEach((k) => caches.delete(k)));
   }
 }
 

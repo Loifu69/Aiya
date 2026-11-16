@@ -1,6 +1,18 @@
 export type FriendStatus = 'SUDAH_MINUM' | 'WAKTUNYA_MINUM' | 'TERLAMBAT';
 
-export type SoundType = 'river' | 'droplets' | 'rain';
+export type SoundType = 'river' | 'droplets' | 'rain' | 'custom';
+
+// User-uploaded reminder sound. The audio itself is stored in Firestore
+// (collection ringtoneChunks, split into base64 pieces) and cached per device.
+export interface RingtoneMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number; // bytes
+  chunks: number;
+  durationSec: number;
+  updatedAt: string;
+}
 
 export interface UserAccount {
   id: string;
@@ -20,6 +32,7 @@ export interface UserSettings {
   dailyTargetMl: number; // daily water goal, e.g. 2000 ml
   glassMl: number; // amount added each time "Sudah Minum" is pressed, e.g. 250 ml
   soundType: SoundType;
+  ringtone?: RingtoneMeta | null; // used when soundType is 'custom'
   volume: number;
   quietHoursEnabled: boolean;
   quietStart: string; // "22:00"
