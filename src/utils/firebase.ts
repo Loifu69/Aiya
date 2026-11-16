@@ -11,9 +11,11 @@ import {
   where,
   onSnapshot,
   deleteDoc,
+  deleteField,
   runTransaction,
   Unsubscribe,
 } from 'firebase/firestore';
+import { createCredential, PasswordCredential } from './password';
 import {
   DrinkLog,
   DrinkStatus,
@@ -110,6 +112,93 @@ export function isFirebaseReady(): boolean {
 
 // ----------------- FIRESTORE CLOUD OPERATIONS -----------------
 
+// Keep only public account fields. Old account docs had a plain-text `password`
+// field; it must never be cached, shown, or written back.
+export function sanitizeAccount(raw: unknown): UserAccount {
+  const a = (raw || {}) as Record<string, unknown>;
+  const account: UserAccount = {
+    id: String(a.id || ''),
+    username: String(a.username || ''),
+    name: String(a.name || ''),
+    userCode: String(a.userCode || a.username || ''),
+    createdAt: String(a.createdAt || ''),
+  };
+  if (typeof a.avatar === 'string') account.avatar = a.avatar;
+  return account;
+}
+
+// Credentials live in their own collection, never inside the public account doc.
+export async function firestoreGetCredential(userId: string): Promise<PasswordCredential | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+  try {
+    const snap = await getDoc(doc(db, 'credentials', userId));
+    return snap.exists() ? (snap.data() as PasswordCredential) : null;
+  } catch (err) {
+    console.error('Firestore get credential error:', err);
+    return null;
+  }
+}
+
+// Move a legacy plain-text password out of the account doc into a hashed credential.
+async function migrateLegacyPassword(db: Firestore, userId: string, plain: string): Promise<PasswordCredential | null> {
+  try {
+    const credRef = doc(db, 'credentials', userId);
+    const existing = await getDoc(credRef);
+    let cred = existing.exists() ? (existing.data() as PasswordCredential) : null;
+    if (!cred) {
+      cred = createCredential(userId, plain);
+      await setDoc(credRef, cred);
+    }
+    await setDoc(doc(db, 'accounts', userId), { password: deleteField() }, { merge: true });
+    return cred;
+  } catch (err) {
+    console.error('Firestore password migration error:', err);
+    return null;
+  }
+}
+
+export interface LoginRecord {
+  account: UserAccount;
+  credential: PasswordCredential | null;
+}
+
+// Look up everything needed to check a login, migrating an old plain-text password if found.
+export async function firestoreGetLoginRecord(username: string): Promise<LoginRecord | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'accounts'), where('username', '==', username.toLowerCase().trim()))
+    );
+    if (snap.empty) return null;
+    const raw = snap.docs[0].data();
+    const account = sanitizeAccount(raw);
+
+    let credential = await firestoreGetCredential(account.id);
+    if (typeof raw.password === 'string' && raw.password) {
+      credential = (await migrateLegacyPassword(db, account.id, raw.password)) || credential;
+    }
+    return { account, credential };
+  } catch (err) {
+    console.error('Firestore login lookup error:', err);
+    return null;
+  }
+}
+
+export async function firestoreSaveCredential(cred: PasswordCredential): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+  try {
+    await setDoc(doc(db, 'credentials', cred.userId), cred);
+    return true;
+  } catch (err) {
+    console.error('Firestore save credential error:', err);
+    return false;
+  }
+}
+
 // Cloud Account: Register
 export async function firestoreRegisterAccount(
   account: UserAccount,
@@ -136,8 +225,8 @@ export async function firestoreRegisterAccount(
       return false;
     }
 
-    // Save account
-    await setDoc(doc(db, 'accounts', account.id), account);
+    // Save account (public fields only)
+    await setDoc(doc(db, 'accounts', account.id), sanitizeAccount(account));
     // Save settings
     await setDoc(doc(db, 'settings', account.id), settings);
     // Save status only if cloud has none or local one is newer (avoid stale overwrite on new device)
@@ -164,7 +253,8 @@ export type CreateAccountResult = 'ok' | 'taken' | 'error';
 export async function firestoreCreateAccountUnique(
   account: UserAccount,
   settings: UserSettings,
-  status: DrinkStatus
+  status: DrinkStatus,
+  credential: PasswordCredential
 ): Promise<CreateAccountResult> {
   const { db } = initFirebase();
   if (!db) return 'error';
@@ -185,7 +275,8 @@ export async function firestoreCreateAccountUnique(
         throw new Error('USERNAME_TAKEN');
       }
       tx.set(usernameRef, { userId: account.id, createdAt: new Date().toISOString() });
-      tx.set(doc(db, 'accounts', account.id), account);
+      tx.set(doc(db, 'accounts', account.id), sanitizeAccount(account));
+      tx.set(doc(db, 'credentials', account.id), credential);
       tx.set(doc(db, 'settings', account.id), settings);
       tx.set(doc(db, 'statuses', account.id), status);
     });
@@ -214,31 +305,26 @@ export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
     }
 
     await deleteDoc(doc(db, 'accounts', userId));
+    await deleteDoc(doc(db, 'credentials', userId));
     await deleteDoc(doc(db, 'settings', userId));
     await deleteDoc(doc(db, 'statuses', userId));
     await deleteDoc(doc(db, 'userFriends', userId));
 
-    // Delete friendships involving this user (both sides lose the friend)
-    const f1 = await getDocs(query(collection(db, 'friendships'), where('user1Id', '==', userId)));
-    const f2 = await getDocs(query(collection(db, 'friendships'), where('user2Id', '==', userId)));
-    for (const d of [...f1.docs, ...f2.docs]) {
-      await deleteDoc(doc(db, 'friendships', d.id));
-    }
-
-    // Delete friend requests where user was sender or recipient
-    const reqsSnap = await getDocs(collection(db, 'friendRequests'));
-    for (const d of reqsSnap.docs) {
-      const data = d.data();
-      if (data.fromUserId === userId || data.toUserId === userId) {
-        await deleteDoc(doc(db, 'friendRequests', d.id));
-      }
-    }
-    // Delete nudges where user was sender or recipient
-    const nudgesSnap = await getDocs(collection(db, 'nudges'));
-    for (const d of nudgesSnap.docs) {
-      const data = d.data();
-      if (data.fromUserId === userId || data.toUserId === userId) {
-        await deleteDoc(doc(db, 'nudges', d.id));
+    // Delete every doc that references this user: friendships (both sides lose the friend),
+    // friend requests and nudges (sent or received), and drink logs.
+    const targets: [string, string][] = [
+      ['friendships', 'user1Id'],
+      ['friendships', 'user2Id'],
+      ['friendRequests', 'fromUserId'],
+      ['friendRequests', 'toUserId'],
+      ['nudges', 'fromUserId'],
+      ['nudges', 'toUserId'],
+      ['drinkLogs', 'userId'],
+    ];
+    for (const [col, field] of targets) {
+      const snap = await getDocs(query(collection(db, col), where(field, '==', userId)));
+      for (const d of snap.docs) {
+        await deleteDoc(d.ref);
       }
     }
     return true;
@@ -262,7 +348,7 @@ export async function firestoreFindAccountByUsername(
     );
     const snap = await getDocs(q);
     if (!snap.empty) {
-      return snap.docs[0].data() as UserAccount;
+      return sanitizeAccount(snap.docs[0].data());
     }
   } catch (err) {
     console.error('Firestore query username error:', err);
@@ -277,7 +363,14 @@ export async function firestoreGetAllAccounts(): Promise<UserAccount[]> {
 
   try {
     const snap = await getDocs(collection(db, 'accounts'));
-    return snap.docs.map((d) => d.data() as UserAccount);
+    // Clean up any account docs that still carry a plain-text password
+    for (const d of snap.docs) {
+      const raw = d.data();
+      if (typeof raw.password === 'string' && raw.password) {
+        migrateLegacyPassword(db, d.id, raw.password).catch(() => {});
+      }
+    }
+    return snap.docs.map((d) => sanitizeAccount(d.data()));
   } catch (err) {
     console.error('Firestore get all accounts error:', err);
     return [];
@@ -372,66 +465,40 @@ export async function firestoreSendFriendRequest(request: FriendRequest): Promis
   }
 }
 
-export function firestoreSubscribeRequests(
-  user: { id: string; username?: string } | string,
+// Only this user's pending requests are fetched (not the whole collection)
+function subscribePendingRequests(
+  field: 'toUserId' | 'fromUserId',
+  userId: string,
   onChange: (reqs: FriendRequest[]) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
-  const targetId = typeof user === 'string' ? user : user.id;
-  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
-
   const q = query(
     collection(db, 'friendRequests'),
+    where(field, '==', userId),
     where('status', '==', 'PENDING')
   );
 
   return onSnapshot(
     q,
-    (snap) => {
-      const list = snap.docs
-        .map((d) => d.data() as FriendRequest)
-        .filter(
-          (r) =>
-            r.toUserId === targetId ||
-            (targetUsername && r.toUsername && r.toUsername.toLowerCase().trim() === targetUsername)
-        );
-      onChange(list);
-    },
-    (err) => console.warn('Requests snapshot listener:', err)
+    (snap) => onChange(snap.docs.map((d) => d.data() as FriendRequest)),
+    (err) => console.warn(`Requests snapshot listener (${field}):`, err)
   );
 }
 
-export function firestoreSubscribeOutgoingRequests(
-  user: { id: string; username?: string } | string,
+export function firestoreSubscribeRequests(
+  user: { id: string },
   onChange: (reqs: FriendRequest[]) => void
 ): Unsubscribe | null {
-  const { db } = initFirebase();
-  if (!db) return null;
+  return subscribePendingRequests('toUserId', user.id, onChange);
+}
 
-  const targetId = typeof user === 'string' ? user : user.id;
-  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
-
-  const q = query(
-    collection(db, 'friendRequests'),
-    where('status', '==', 'PENDING')
-  );
-
-  return onSnapshot(
-    q,
-    (snap) => {
-      const list = snap.docs
-        .map((d) => d.data() as FriendRequest)
-        .filter(
-          (r) =>
-            r.fromUserId === targetId ||
-            (targetUsername && r.fromUsername && r.fromUsername.toLowerCase().trim() === targetUsername)
-        );
-      onChange(list);
-    },
-    (err) => console.warn('Outgoing requests snapshot listener:', err)
-  );
+export function firestoreSubscribeOutgoingRequests(
+  user: { id: string },
+  onChange: (reqs: FriendRequest[]) => void
+): Unsubscribe | null {
+  return subscribePendingRequests('fromUserId', user.id, onChange);
 }
 
 export async function firestoreSaveUserFriends(
@@ -659,7 +726,7 @@ export function firestoreSubscribeFriendsLive(
           onSnapshot(
             doc(db, 'accounts', id),
             (snap) => {
-              accountCache.set(id, snap.exists() ? (snap.data() as UserAccount) : null);
+              accountCache.set(id, snap.exists() ? sanitizeAccount(snap.data()) : null);
               emit();
             },
             (err) => console.warn('Friend account listener:', err)
@@ -744,17 +811,16 @@ export async function firestoreMarkNudgeAsRead(nudgeId: string): Promise<void> {
 }
 
 export function firestoreSubscribeNudges(
-  user: { id: string; username?: string } | string,
+  user: { id: string },
   onNudge: (nudge: NudgeEvent) => void
 ): Unsubscribe | null {
   const { db } = initFirebase();
   if (!db) return null;
 
-  const targetId = typeof user === 'string' ? user : user.id;
-  const targetUsername = typeof user === 'string' ? '' : (user.username || '').toLowerCase().trim();
-
+  // Only unread nudges addressed to this user
   const q = query(
     collection(db, 'nudges'),
+    where('toUserId', '==', user.id),
     where('isRead', '==', false)
   );
 
@@ -764,13 +830,7 @@ export function firestoreSubscribeNudges(
       const incoming: NudgeEvent[] = [];
       snap.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          const nudge = change.doc.data() as NudgeEvent;
-          if (
-            nudge.toUserId === targetId ||
-            (targetUsername && nudge.toUsername && nudge.toUsername.toLowerCase().trim() === targetUsername)
-          ) {
-            incoming.push(nudge);
-          }
+          incoming.push(change.doc.data() as NudgeEvent);
         }
       });
 
@@ -789,4 +849,36 @@ export function firestoreSubscribeNudges(
     },
     (err) => console.warn('Nudges snapshot listener:', err)
   );
+}
+
+// ----------------- DRINK LOGS (RIWAYAT) -----------------
+
+export const MAX_LOGS = 50;
+
+export async function firestoreAddLog(log: DrinkLog): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+
+  try {
+    await setDoc(doc(db, 'drinkLogs', log.id), log);
+  } catch (err) {
+    console.error('Firestore add log error:', err);
+  }
+}
+
+// Newest first. Sorted on the client so no composite index is needed.
+export async function firestoreGetLogs(userId: string): Promise<DrinkLog[] | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const snap = await getDocs(query(collection(db, 'drinkLogs'), where('userId', '==', userId)));
+    return snap.docs
+      .map((d) => d.data() as DrinkLog)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, MAX_LOGS);
+  } catch (err) {
+    console.error('Firestore get logs error:', err);
+    return null;
+  }
 }

@@ -30,6 +30,7 @@ import {
   getStoredSettings,
   logoutUser,
   markStoredNudgeAsRead,
+  mergeLogs,
   NUDGE_COOLDOWN_MS,
   rejectFriendRequest,
   removeMutualFriendship,
@@ -38,6 +39,7 @@ import {
   setActiveSessionUserId,
   saveStoredDrinkStatus,
   saveStoredFriends,
+  saveStoredLogs,
   saveStoredNudges,
   saveStoredSettings,
   sendFriendRequest,
@@ -60,8 +62,8 @@ import { HistoryPage } from './components/HistoryPage';
 import { OnboardingModal } from './components/OnboardingModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import {
-  firestoreSaveDrinkStatus,
-  firestoreSubscribeDrinkStatus,
+  firestoreAddLog,
+  firestoreGetLogs,
   firestoreSendFriendRequest,
   firestoreSubscribeRequests,
   firestoreSubscribeOutgoingRequests,
@@ -170,8 +172,6 @@ export default function App() {
   const [isInstalledPwa, setIsInstalledPwa] = useState(false);
   const [isCloudSyncOpen, setIsCloudSyncOpen] = useState(false);
 
-  // Track if sound is currently ringing for reminder
-  const isRingingRef = useRef(false);
   const isSoundMutedRef = useRef(false);
   useEffect(() => {
     isSoundMutedRef.current = isSoundMuted;
@@ -231,6 +231,19 @@ export default function App() {
           });
         }
       }
+    }).catch(() => {});
+
+    // 2c. Load drink history from cloud; upload any entries only stored on this device
+    firestoreGetLogs(currentUser.id).then((cloudLogs) => {
+      if (!cloudLogs) return;
+      const local = getStoredLogs(currentUser.id);
+      const cloudIds = new Set(cloudLogs.map((l) => l.id));
+      local
+        .filter((l) => !cloudIds.has(l.id))
+        .forEach((l) => firestoreAddLog({ ...l, userId: currentUser.id }).catch(() => {}));
+      const merged = mergeLogs(cloudLogs, local);
+      saveStoredLogs(merged, currentUser.id);
+      setLogs(merged);
     }).catch(() => {});
 
     // 3. Listen to incoming friend requests in real-time
@@ -372,7 +385,6 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     stopWaterSound();
-    isRingingRef.current = false;
     logoutUser();
     setCurrentUser(null);
   }, []);
@@ -382,7 +394,6 @@ export default function App() {
     const res = await deleteAccount(currentUser.id, password);
     if (res.success) {
       stopWaterSound();
-      isRingingRef.current = false;
       setCurrentUser(null);
       setAllAccounts(getStoredAccounts());
     }
@@ -484,7 +495,6 @@ export default function App() {
     const updated: DrinkStatus = {
       ...drinkStatus,
       nextAlarmAt: new Date(currentTimeMs + settings.snoozeMinutes * 60 * 1000).toISOString(),
-      reminderState: 'IDLE',
     };
     setDrinkStatus(updated);
     saveStoredDrinkStatus(updated, currentUser.id);
@@ -494,7 +504,6 @@ export default function App() {
   const handleDrinkNow = useCallback(() => {
     if (!currentUser) return;
     stopWaterSound();
-    isRingingRef.current = false;
     playSuccessChime();
 
     const wasDue = currentTimeMs >= new Date(drinkStatus.dueAt).getTime();
@@ -506,7 +515,6 @@ export default function App() {
       lastDrinkAt: nowIso,
       dueAt: nextTimeIso,
       nextAlarmAt: nextTimeIso,
-      reminderState: 'IDLE',
     };
 
     setDrinkStatus(newStatus);
@@ -763,7 +771,6 @@ export default function App() {
       lastDrinkAt: nowIso,
       dueAt: nextIso,
       nextAlarmAt: nextIso,
-      reminderState: 'IDLE',
     };
     setDrinkStatus(newStatus);
     saveStoredDrinkStatus(newStatus, currentUser.id);
@@ -793,7 +800,6 @@ export default function App() {
       {/* Top Header */}
       <Header
         currentUser={currentUser}
-        reminderState={drinkStatus.reminderState}
         isSoundMuted={isSoundMuted}
         onToggleMute={() => {
           setIsSoundMuted(!isSoundMuted);

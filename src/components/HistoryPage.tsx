@@ -1,5 +1,5 @@
 import React from 'react';
-import { History, Check, Clock, Calendar, Plus, Droplet } from 'lucide-react';
+import { History, Plus, Droplet } from 'lucide-react';
 import { DrinkLog } from '../types';
 import { formatTimeHM } from '../utils/storage';
 
@@ -9,8 +9,9 @@ interface HistoryPageProps {
 }
 
 export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }) => {
-  const sudahCount = logs.filter((l) => l.action === 'SUDAH' || l.action === 'MANUAL').length;
-  const belumCount = logs.filter((l) => l.action === 'BELUM').length;
+  const totalCount = logs.length;
+  const todayKey = new Date().toDateString();
+  const todayCount = logs.filter((l) => new Date(l.timestamp).toDateString() === todayKey).length;
 
   return (
     <div className="space-y-6 max-w-xl mx-auto pb-20 md:pb-8">
@@ -23,7 +24,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }
               <span>Riwayat Minum</span>
             </h1>
             <p className="text-xs text-slate-500 mt-1">
-              Catatan konfirmasi &quot;Sudah&quot; dan &quot;Belum&quot; minum air.
+              Catatan setiap kali kamu menekan &quot;Sudah Minum&quot;.
             </p>
           </div>
           <button
@@ -39,27 +40,27 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }
         <div className="grid grid-cols-2 gap-3 pt-2">
           <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-              Konfirmasi Sudah
+              Hari Ini
             </span>
             <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums flex items-baseline gap-1.5">
-              <span>{sudahCount}</span>
+              <span>{todayCount}</span>
               <span className="text-xs font-normal text-slate-500">kali</span>
             </div>
             <span className="text-[11px] text-emerald-600 mt-1 block">
-              ≈ {(sudahCount * 250) / 1000} Liter air
+              ≈ {(todayCount * 250) / 1000} Liter air
             </span>
           </div>
 
           <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-              Ditunda (Belum)
+              Total Tercatat
             </span>
             <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums flex items-baseline gap-1.5">
-              <span>{belumCount}</span>
+              <span>{totalCount}</span>
               <span className="text-xs font-normal text-slate-500">kali</span>
             </div>
-            <span className="text-[11px] text-amber-600 mt-1 block">
-              Jadwal disesuaikan
+            <span className="text-[11px] text-sky-600 mt-1 block">
+              ≈ {(totalCount * 250) / 1000} Liter air
             </span>
           </div>
         </div>
@@ -87,31 +88,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }
               return (
                 <div key={log.id} className="py-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                        log.action === 'SUDAH' || log.action === 'MANUAL'
-                          ? 'bg-sky-50 text-sky-600 border border-sky-100'
-                          : 'bg-amber-50 text-amber-600 border border-amber-100'
-                      }`}
-                    >
-                      {log.action === 'SUDAH' || log.action === 'MANUAL' ? (
-                        <Droplet className="w-4 h-4" />
-                      ) : (
-                        <Clock className="w-4 h-4" />
-                      )}
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-sky-50 text-sky-600 border border-sky-100">
+                      <Droplet className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-900">
-                          {log.action === 'SUDAH'
-                            ? 'Konfirmasi Minum ("Sudah")'
-                            : log.action === 'MANUAL'
-                            ? 'Minum di Luar Alarm'
-                            : 'Alarm Ditunda ("Belum")'}
+                          {log.action === 'SUDAH' ? 'Minum Setelah Diingatkan' : 'Minum Sebelum Pengingat'}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        {log.note || (log.action === 'BELUM' ? 'Jadwal alarm digeser ke durasi tunda' : 'Jadwal berikutnya dimajukan +interval')}
+                        {log.note || 'Jadwal berikutnya dihitung ulang dari waktu ini'}
                       </p>
                     </div>
                   </div>

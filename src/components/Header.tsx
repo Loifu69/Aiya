@@ -1,10 +1,9 @@
 import React from 'react';
 import { Droplets, Volume2, VolumeX, LogOut, Download } from 'lucide-react';
-import { ReminderState, UserAccount } from '../types';
+import { UserAccount } from '../types';
 
 interface HeaderProps {
   currentUser: UserAccount;
-  reminderState: ReminderState;
   isSoundMuted: boolean;
   onToggleMute: () => void;
   onLogout: () => void;
@@ -14,7 +13,6 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
-  reminderState,
   isSoundMuted,
   onToggleMute,
   onLogout,

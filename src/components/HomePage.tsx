@@ -53,7 +53,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   return (
     <div className="space-y-6 pb-20 md:pb-8">
-      {/* Feedback banner if user just clicked Sudah/Belum */}
+      {/* Feedback banner after the user records a drink */}
       {lastFeedbackMessage && (
         <div className="bg-sky-50 border border-sky-200 text-sky-800 rounded-2xl p-4 flex items-center justify-between shadow-xs animate-in fade-in duration-200">
           <div className="flex items-center gap-3">
@@ -144,7 +144,8 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* Simulator Control & Information Card */}
+      {/* Time simulator: only for development (npm run dev), hidden in the deployed app */}
+      {import.meta.env.DEV && (
       <section className="bg-slate-100/70 border border-slate-200 rounded-2xl p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -190,6 +191,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           </button>
         </div>
       </section>
+      )}
     </div>
   );
 };

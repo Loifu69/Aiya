@@ -9,18 +9,62 @@ import {
   UserSettings,
 } from '../types';
 import {
-  firestoreFindAccountByUsername,
-  firestoreGetAllAccounts,
+  firestoreAddLog,
   firestoreCreateAccountUnique,
   firestoreDeleteAccount,
+  firestoreGetCredential,
+  firestoreGetLoginRecord,
   firestoreSaveDrinkStatus,
   isFirebaseReady,
+  MAX_LOGS,
+  sanitizeAccount,
 } from './firebase';
+import { createCredential, PasswordCredential, verifyCredential } from './password';
 
 const STORAGE_KEYS = {
   ACCOUNTS: 'aiya_accounts_db_v2',
   ACTIVE_USER_ID: 'aiya_active_session_v2',
+  CREDENTIALS: 'aiya_credentials_v1',
 };
+
+// ----------------- LOCAL PASSWORD CREDENTIALS (hashed) -----------------
+
+function getLocalCredentials(): Record<string, PasswordCredential> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CREDENTIALS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {
+    // fallback
+  }
+  return {};
+}
+
+function getLocalCredential(userId: string): PasswordCredential | null {
+  return getLocalCredentials()[userId] || null;
+}
+
+function saveLocalCredential(cred: PasswordCredential): void {
+  try {
+    const all = getLocalCredentials();
+    all[cred.userId] = cred;
+    localStorage.setItem(STORAGE_KEYS.CREDENTIALS, JSON.stringify(all));
+  } catch {
+    // ignore
+  }
+}
+
+function removeLocalCredential(userId: string): void {
+  try {
+    const all = getLocalCredentials();
+    delete all[userId];
+    localStorage.setItem(STORAGE_KEYS.CREDENTIALS, JSON.stringify(all));
+  } catch {
+    // ignore
+  }
+}
 
 // Grace period for "Waktunya minum" vs "Terlambat" (5 minutes)
 export const GRACE_PERIOD_MS = 5 * 60 * 1000;
@@ -63,8 +107,24 @@ export function getStoredAccounts(): UserAccount[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const cleaned = (parsed as UserAccount[]).filter((a) => a && !isRemovedDemoAccount(a));
-        if (cleaned.length !== parsed.length) {
+        let changed = false;
+        const cleaned = (parsed as (UserAccount & { password?: string })[])
+          .filter((a) => {
+            const keep = a && !isRemovedDemoAccount(a);
+            if (!keep) changed = true;
+            return keep;
+          })
+          .map((a) => {
+            // Old caches stored the plain-text password: hash it and drop it
+            if (typeof a.password === 'string') {
+              changed = true;
+              if (a.password && !getLocalCredential(a.id)) {
+                saveLocalCredential(createCredential(a.id, a.password));
+              }
+            }
+            return sanitizeAccount(a);
+          });
+        if (changed) {
           saveStoredAccounts(cleaned);
         }
         return cleaned;
@@ -78,7 +138,7 @@ export function getStoredAccounts(): UserAccount[] {
 
 export function saveStoredAccounts(accounts: UserAccount[]): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(accounts));
+    localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(accounts.map(sanitizeAccount)));
   } catch {
     // ignore
   }
@@ -147,7 +207,6 @@ export async function registerAccount(
   const newAccount: UserAccount = {
     id: userId,
     username,
-    password,
     name: displayName,
     userCode,
     avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`,
@@ -177,13 +236,14 @@ export async function registerAccount(
     lastDrinkAt: new Date(now - 15 * 60 * 1000).toISOString(),
     dueAt: nextTime,
     nextAlarmAt: nextTime,
-    reminderState: 'IDLE',
   };
+
+  const credential = createCredential(userId, password);
 
   // Create in cloud FIRST with a unique username reservation.
   // If the cloud is unreachable, do NOT create a local-only account (it would be invisible to friends).
   if (isFirebaseReady()) {
-    const result = await firestoreCreateAccountUnique(newAccount, newSettings, initialStatus);
+    const result = await firestoreCreateAccountUnique(newAccount, newSettings, initialStatus, credential);
     if (result === 'taken') {
       return { success: false, message: 'Username telah digunakan' };
     }
@@ -197,6 +257,7 @@ export async function registerAccount(
 
   // Save locally only after the cloud accepted the account
   saveStoredAccounts([...accounts, newAccount]);
+  saveLocalCredential(credential);
   saveStoredSettings(newSettings, userId);
   saveStoredDrinkStatus(initialStatus, userId);
 
@@ -225,20 +286,19 @@ export async function loginAccount(
     return { success: false, message: 'Masukkan username dan password.' };
   }
 
-  // 1. Check local cache
+  // 1. Check local cache (hashed credential saved on this device)
   const accounts = getStoredAccounts();
-  let user = accounts.find(
-    (a) => a.username.toLowerCase() === username && a.password === password
-  );
+  const local = accounts.find((a) => a.username.toLowerCase() === username);
+  let user = local && verifyCredential(getLocalCredential(local.id), password) ? local : undefined;
 
-  // 2. If not found in local cache and Firebase is connected, check cloud Firestore!
+  // 2. Otherwise check the cloud (also moves old plain-text passwords to hashed credentials)
   if (!user && isFirebaseReady()) {
     try {
-      const cloudUser = await firestoreFindAccountByUsername(username);
-      if (cloudUser && cloudUser.password === password) {
-        user = cloudUser;
-        // Merge into local accounts cache
-        saveStoredAccounts([...accounts.filter((a) => a.id !== cloudUser.id), cloudUser]);
+      const record = await firestoreGetLoginRecord(username);
+      if (record && record.credential && verifyCredential(record.credential, password)) {
+        user = record.account;
+        saveLocalCredential(record.credential);
+        saveStoredAccounts([...accounts.filter((a) => a.id !== record.account.id), record.account]);
       }
     } catch (err) {
       console.warn('Firestore login check warning:', err);
@@ -272,7 +332,12 @@ export async function deleteAccount(
     return { success: false, message: 'Akun tidak ditemukan.' };
   }
 
-  if (account.password !== passwordConfirm.trim()) {
+  const pw = passwordConfirm.trim();
+  let passwordOk = verifyCredential(getLocalCredential(userId), pw);
+  if (!passwordOk && isFirebaseReady()) {
+    passwordOk = verifyCredential(await firestoreGetCredential(userId), pw);
+  }
+  if (!passwordOk) {
     return { success: false, message: 'Password salah. Konfirmasi penghapusan gagal.' };
   }
 
@@ -293,6 +358,8 @@ export async function deleteAccount(
   } catch {
     // ignore
   }
+
+  removeLocalCredential(userId);
 
   // 3. Remove from accounts list
   const remainingAccounts = accounts.filter((a) => a.id !== userId);
@@ -370,7 +437,6 @@ export function getStoredDrinkStatus(targetUserId?: string): DrinkStatus {
     lastDrinkAt: new Date(now - 10 * 60 * 1000).toISOString(),
     dueAt: nextTime,
     nextAlarmAt: nextTime,
-    reminderState: 'IDLE',
   };
 }
 
@@ -392,41 +458,55 @@ export function getStoredLogs(targetUserId?: string): DrinkLog[] {
   const uid = targetUserId || getActiveSessionUserId() || 'user-001';
   try {
     const raw = localStorage.getItem(`aiya_logs_${uid}`);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // Drop old placeholder entries and the retired "BELUM" action
+        return (parsed as DrinkLog[]).filter(
+          (l) =>
+            l &&
+            (l.action === 'SUDAH' || l.action === 'MANUAL') &&
+            l.id !== `log-${uid}-1` &&
+            l.id !== `log-${uid}-2`
+        );
+      }
+    }
   } catch {
     // fallback
   }
-  const now = Date.now();
-  return [
-    {
-      id: `log-${uid}-1`,
-      userId: uid,
-      action: 'SUDAH',
-      timestamp: new Date(now - 190 * 60 * 1000).toISOString(),
-      note: 'Minum 1 gelas air putih (250ml)',
-    },
-    {
-      id: `log-${uid}-2`,
-      userId: uid,
-      action: 'SUDAH',
-      timestamp: new Date(now - 10 * 60 * 1000).toISOString(),
-      note: 'Minum setelah diingatkan Aiya',
-    },
-  ];
+  return [];
+}
+
+export function saveStoredLogs(logs: DrinkLog[], targetUserId?: string): void {
+  const uid = targetUserId || getActiveSessionUserId() || 'user-001';
+  try {
+    localStorage.setItem(`aiya_logs_${uid}`, JSON.stringify(logs.slice(0, MAX_LOGS)));
+  } catch {
+    // ignore
+  }
+}
+
+// Merge cloud + local logs by id, newest first
+export function mergeLogs(a: DrinkLog[], b: DrinkLog[]): DrinkLog[] {
+  const map = new Map<string, DrinkLog>();
+  [...a, ...b].forEach((l) => map.set(l.id, l));
+  return Array.from(map.values())
+    .sort((x, y) => new Date(y.timestamp).getTime() - new Date(x.timestamp).getTime())
+    .slice(0, MAX_LOGS);
 }
 
 export function addStoredLog(log: Omit<DrinkLog, 'id'>, targetUserId?: string): DrinkLog {
   const uid = targetUserId || log.userId || getActiveSessionUserId() || 'user-001';
-  const logs = getStoredLogs(uid);
   const newLog: DrinkLog = {
     ...log,
+    userId: uid,
     id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
   };
-  const updated = [newLog, ...logs].slice(0, 50);
-  try {
-    localStorage.setItem(`aiya_logs_${uid}`, JSON.stringify(updated));
-  } catch {
-    // ignore
+  saveStoredLogs([newLog, ...getStoredLogs(uid)], uid);
+
+  // Sync to cloud so history follows the user across devices
+  if (isFirebaseReady()) {
+    firestoreAddLog(newLog).catch(() => {});
   }
   return newLog;
 }

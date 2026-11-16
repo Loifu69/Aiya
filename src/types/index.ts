@@ -1,5 +1,3 @@
-export type ReminderState = 'IDLE' | 'RINGING' | 'CONFIRMING';
-
 export type FriendStatus = 'SUDAH_MINUM' | 'WAKTUNYA_MINUM' | 'TERLAMBAT';
 
 export type SoundType = 'river' | 'droplets' | 'rain';
@@ -7,7 +5,6 @@ export type SoundType = 'river' | 'droplets' | 'rain';
 export interface UserAccount {
   id: string;
   username: string;
-  password: string;
   name: string;
   userCode: string;
   avatar?: string;
@@ -31,15 +28,14 @@ export interface UserSettings {
 export interface DrinkStatus {
   userId: string;
   lastDrinkAt: string | null; // ISO
-  dueAt: string; // ISO - changes ONLY on 'Sudah'
-  nextAlarmAt: string; // ISO - changes on 'Sudah' and 'Belum'
-  reminderState: ReminderState;
+  dueAt: string; // ISO - next scheduled drink, changes only when the user drinks
+  nextAlarmAt: string; // ISO - next time the reminder sound plays (repeats every snoozeMinutes while overdue)
 }
 
 export interface DrinkLog {
   id: string;
   userId: string;
-  action: 'SUDAH' | 'BELUM' | 'MANUAL';
+  action: 'SUDAH' | 'MANUAL'; // SUDAH = after reminder was due, MANUAL = before it
   timestamp: string; // ISO
   note?: string;
 }

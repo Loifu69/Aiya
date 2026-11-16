@@ -570,9 +570,9 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
             </div>
           </div>
 
-          {/* Privacy rule card from Section 10.4 */}
+          {/* Two-way approval rule */}
           <section className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-xs text-slate-600 space-y-1.5">
-            <span className="font-bold text-slate-800 block">Aturan Persetujuan Dua Arah (Sesuai Dokumen Spesifikasi 10.4):</span>
+            <span className="font-bold text-slate-800 block">Aturan Persetujuan Dua Arah:</span>
             <ul className="list-disc list-inside space-y-1 text-slate-600">
               <li>Pertemanan harus disetujui oleh penerima agar status hidrasi dapat saling terlihat.</li>
               <li>Teman hanya dapat melihat waktu terakhir minum, jadwal berikutnya, dan status hidrasi.</li>
