@@ -965,10 +965,13 @@ export async function firestoreSaveRingtoneChunks(userId: string, ringtoneId: st
   const { db } = initFirebase();
   if (!db) return false;
   try {
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk: RingtoneChunk = { userId, ringtoneId, index: i, data: chunks[i] };
-      await setDoc(doc(db, 'ringtoneChunks', `${ringtoneId}_${i}`), chunk);
-    }
+    // Upload all pieces in parallel (much faster than one by one)
+    await Promise.all(
+      chunks.map((data, index) => {
+        const chunk: RingtoneChunk = { userId, ringtoneId, index, data };
+        return setDoc(doc(db, 'ringtoneChunks', `${ringtoneId}_${index}`), chunk);
+      })
+    );
     return true;
   } catch (err) {
     console.error('Firestore save ringtone error:', err);

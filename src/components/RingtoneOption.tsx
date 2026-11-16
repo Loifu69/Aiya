@@ -2,7 +2,14 @@ import React, { useRef, useState } from 'react';
 import { Music, Play, Square, Trash2, Upload } from 'lucide-react';
 import { UserSettings } from '../types';
 import { playAudioBuffer, stopWaterSound } from '../utils/audio';
-import { deleteRingtone, formatBytes, getRingtoneBuffer, MAX_RINGTONE_BYTES, uploadRingtone } from '../utils/ringtone';
+import {
+  deleteRingtone,
+  formatBytes,
+  getRingtoneBuffer,
+  MAX_RINGTONE_BYTES,
+  RINGTONE_MAX_SECONDS,
+  uploadRingtone,
+} from '../utils/ringtone';
 
 interface RingtoneOptionProps {
   userId: string;
@@ -125,7 +132,7 @@ export const RingtoneOption: React.FC<RingtoneOptionProps> = ({
           <p className="text-[11px] text-slate-500 ml-5 mt-0.5 truncate">
             {ringtone
               ? `${ringtone.name} · ${formatBytes(ringtone.size)} · ${ringtone.durationSec} dtk`
-              : `Unggah file audio sendiri (maks ${formatBytes(MAX_RINGTONE_BYTES)})`}
+              : `Unggah file audio sendiri (maks ${formatBytes(MAX_RINGTONE_BYTES)}, diputar ${RINGTONE_MAX_SECONDS} detik pertama)`}
           </p>
         </div>
 
@@ -166,7 +173,7 @@ export const RingtoneOption: React.FC<RingtoneOptionProps> = ({
           className="px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-semibold flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
         >
           <Upload className="w-3.5 h-3.5" />
-          <span>{busy === 'upload' ? 'Mengunggah...' : ringtone ? 'Ganti File' : 'Pilih File Audio'}</span>
+          <span>{busy === 'upload' ? 'Memproses & mengunggah...' : ringtone ? 'Ganti File' : 'Pilih File Audio'}</span>
         </button>
         {ringtone && (
           <button

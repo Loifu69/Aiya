@@ -541,7 +541,7 @@ export default function App() {
     if (!isSoundMuted) {
       playConfiguredReminder(settings);
     }
-    showSystemNotification('Aiya: Waktunya Minum!', 'Jangan lupa minum air, lalu tekan "Sudah Minum".', 'aiya-drink', true);
+    showSystemNotification('Aiya: Waktunya Minum!', 'Yuk minum air dulu, lalu tekan "Sudah Minum".', 'aiya-drink', true);
   }, [isInQuietHours, isSoundMuted, settings]);
 
   // Reminder loop: when the reminder time is reached, ring, then repeat every
@@ -602,7 +602,8 @@ export default function App() {
     if (!isSoundMuted) {
       playConfiguredReminder(settings);
     }
-    showSystemNotification('Aiya: Tes Pengingat', 'Seperti inilah pengingat minum akan berbunyi.', 'aiya-test', true);
+    // Looks exactly like a real reminder, so the user sees what they'll get
+    showSystemNotification('Aiya: Waktunya Minum!', 'Yuk minum air dulu, lalu tekan "Sudah Minum".', 'aiya-test', true);
   }, [isSoundMuted, settings]);
 
   // Buttons on the notification (public/sw.js sends these messages):

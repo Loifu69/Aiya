@@ -1,11 +1,16 @@
 // Custom reminder sound ("Nada Kustom").
-// The file is stored in Firestore as base64 pieces (Firebase Storage needs a paid plan),
-// so it syncs to every device. Each device keeps a copy in the Cache API and in memory.
+// On upload, only the first 30 s are kept (that's all a reminder plays) and re-encoded
+// as a compact WAV (mono, 22.05 kHz, 16-bit => at most ~1.3 MB), so big song
+// files are fine. The result is stored in Firestore as base64 pieces (Firebase Storage
+// needs a paid plan) and syncs to every device; each device caches it locally.
 import { RingtoneMeta, UserSettings } from '../types';
 import { getAudioContext, playReminderSound } from './audio';
 import { firestoreDeleteRingtone, firestoreLoadRingtoneChunks, firestoreSaveRingtoneChunks } from './firebase';
 
-export const MAX_RINGTONE_BYTES = 2 * 1024 * 1024; // 2 MB
+export const MAX_RINGTONE_BYTES = 15 * 1024 * 1024; // input file limit (15 MB)
+export const RINGTONE_MAX_SECONDS = 30;
+const TARGET_SAMPLE_RATE = 22050;
+const FADE_OUT_SECONDS = 0.4;
 const CHUNK_CHARS = 700_000; // keeps each Firestore doc well under its 1 MiB limit
 const CACHE_NAME = 'aiya-ringtone-v1';
 
@@ -54,18 +59,76 @@ async function decode(bytes: ArrayBuffer): Promise<AudioBuffer> {
   return getAudioContext().decodeAudioData(bytes.slice(0));
 }
 
+// First 30 s, mixed down to mono, resampled to 22.05 kHz, short fade-out if cut.
+// Mono keeps the upload small (it's a reminder sound, not music playback).
+async function trimAndResample(source: AudioBuffer): Promise<AudioBuffer> {
+  const channels = 1;
+  const duration = Math.min(source.duration, RINGTONE_MAX_SECONDS);
+  const length = Math.max(1, Math.ceil(duration * TARGET_SAMPLE_RATE));
+  const offline = new OfflineAudioContext(channels, length, TARGET_SAMPLE_RATE);
+  const node = offline.createBufferSource();
+  node.buffer = source;
+  const gain = offline.createGain();
+  if (source.duration > RINGTONE_MAX_SECONDS) {
+    // avoid a click where the song is cut off
+    gain.gain.setValueAtTime(1, duration - FADE_OUT_SECONDS);
+    gain.gain.linearRampToValueAtTime(0, duration);
+  }
+  node.connect(gain);
+  gain.connect(offline.destination);
+  node.start();
+  return offline.startRendering();
+}
+
+// 16-bit PCM WAV
+function encodeWav(buffer: AudioBuffer): ArrayBuffer {
+  const channels = buffer.numberOfChannels;
+  const frames = buffer.length;
+  const dataBytes = frames * channels * 2;
+  const out = new ArrayBuffer(44 + dataBytes);
+  const v = new DataView(out);
+  const str = (o: number, t: string) => {
+    for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i));
+  };
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + dataBytes, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, channels, true);
+  v.setUint32(24, buffer.sampleRate, true);
+  v.setUint32(28, buffer.sampleRate * channels * 2, true);
+  v.setUint16(32, channels * 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, dataBytes, true);
+  const data = Array.from({ length: channels }, (_, c) => buffer.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < channels; c++) {
+      const x = Math.max(-1, Math.min(1, data[c][i]));
+      v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return out;
+}
+
 export async function uploadRingtone(
   file: File,
   userId: string
 ): Promise<{ ok: true; meta: RingtoneMeta } | { ok: false; message: string }> {
   const looksLikeAudio = file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg|oga|opus|webm|flac)$/i.test(file.name);
   if (!looksLikeAudio) return { ok: false, message: 'Pilih file audio (mp3, m4a, wav, ogg, ...).' };
-  if (file.size > MAX_RINGTONE_BYTES) return { ok: false, message: 'Ukuran file maksimal 2 MB.' };
+  if (file.size > MAX_RINGTONE_BYTES) return { ok: false, message: 'Ukuran file maksimal 15 MB.' };
 
-  const bytes = await file.arrayBuffer();
   let buffer: AudioBuffer;
+  let bytes: ArrayBuffer;
   try {
-    buffer = await decode(bytes);
+    const original = await decode(await file.arrayBuffer());
+    buffer = await trimAndResample(original);
+    bytes = encodeWav(buffer);
   } catch {
     return { ok: false, message: 'File audio ini tidak bisa diputar oleh browser.' };
   }
@@ -78,7 +141,7 @@ export async function uploadRingtone(
   const saved = await firestoreSaveRingtoneChunks(userId, id, chunks);
   if (!saved) return { ok: false, message: 'Gagal mengunggah ke database. Periksa koneksi lalu coba lagi.' };
 
-  const mimeType = file.type || 'audio/mpeg';
+  const mimeType = 'audio/wav';
   await writeCache(id, bytes, mimeType);
   decoded.set(id, buffer);
 
@@ -88,7 +151,7 @@ export async function uploadRingtone(
       id,
       name: file.name.slice(0, 80),
       mimeType,
-      size: file.size,
+      size: bytes.byteLength, // stored size after trimming/compressing
       chunks: chunks.length,
       durationSec: Math.round(buffer.duration * 10) / 10,
       updatedAt: new Date().toISOString(),

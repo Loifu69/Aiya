@@ -170,7 +170,7 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Aiya: Waktunya Minum!';
   event.waitUntil(
     self.registration.showNotification(title, {
-      body: data.body || 'Jangan lupa minum air, lalu tekan "Sudah Minum".',
+      body: data.body || 'Yuk minum air dulu, lalu tekan "Sudah Minum".',
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       tag: data.tag || 'aiya-drink',

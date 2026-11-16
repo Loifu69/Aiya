@@ -41,10 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="w-5 h-5 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-[10px]">
               {currentUser.name.charAt(0).toUpperCase()}
             </div>
-            <div className="flex flex-col leading-tight">
-              <span className="font-bold text-slate-800">{currentUser.name}</span>
-              <span className="text-[10px] text-slate-400 hidden sm:inline">@{currentUser.username}</span>
-            </div>
+            <span className="font-bold text-slate-800 leading-tight">{currentUser.name}</span>
           </div>
 
           <button
