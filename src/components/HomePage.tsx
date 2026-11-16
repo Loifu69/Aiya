@@ -3,10 +3,7 @@ import {
   Clock,
   Droplets,
   BellRing,
-  RotateCcw,
   FastForward,
-  Info,
-  Calendar,
   CheckCircle2,
 } from 'lucide-react';
 import { DrinkStatus, UserSettings } from '../types';
@@ -16,6 +13,7 @@ interface HomePageProps {
   settings: UserSettings;
   drinkStatus: DrinkStatus;
   currentTimeMs: number;
+  todayIntakeMl: number;
   onDrinkNow: () => void;
   onTriggerAlarmNow: () => void;
   onFastForward: (minutes: number) => void;
@@ -27,6 +25,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   settings,
   drinkStatus,
   currentTimeMs,
+  todayIntakeMl,
   onDrinkNow,
   onTriggerAlarmNow,
   onFastForward,
@@ -39,15 +38,12 @@ export const HomePage: React.FC<HomePageProps> = ({
   const nextReminderHM = formatTimeHM(drinkStatus.nextAlarmAt);
   const lastDrinkHM = formatTimeHM(drinkStatus.lastDrinkAt);
 
-  // Compute hydration percentage for visual glass
-  const lastDrinkMs = drinkStatus.lastDrinkAt
-    ? new Date(drinkStatus.lastDrinkAt).getTime()
-    : currentTimeMs - 60 * 60 * 1000;
-  const targetMs = new Date(drinkStatus.dueAt).getTime();
-  const totalDuration = Math.max(1, targetMs - lastDrinkMs);
-  const elapsed = Math.max(0, currentTimeMs - lastDrinkMs);
-  const progressRatio = Math.min(1, Math.max(0, 1 - elapsed / totalDuration));
-  const waterFillPercent = Math.round(progressRatio * 100);
+  // Daily intake progress: how much of today's target has been drunk
+  const targetMl = Math.max(1, settings.dailyTargetMl);
+  const intakePercent = Math.round((todayIntakeMl / targetMl) * 100);
+  const waterFillPercent = Math.min(100, intakePercent);
+  const isTargetReached = todayIntakeMl >= targetMl;
+  const formatMl = (ml: number) => ml.toLocaleString('id-ID');
 
   const isAlarmDueOrPast = remaining.isOverdue;
 
@@ -79,15 +75,24 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* Animated liquid height */}
           <div
             className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-sky-400 to-cyan-300 transition-all duration-1000 ease-out opacity-85"
-            style={{ height: `${Math.max(15, waterFillPercent)}%` }}
+            style={{ height: `${waterFillPercent}%` }}
           />
           <div className="relative z-10 flex flex-col items-center text-slate-800">
-            <Droplets className="w-7 h-7 text-sky-600 mb-1" />
-            <span className="text-xs font-semibold text-slate-700">
-              {waterFillPercent}%
+            <Droplets className="w-6 h-6 text-sky-600 mb-0.5" />
+            <span className="text-2xl font-extrabold text-slate-900 tabular-nums">
+              {intakePercent}%
             </span>
           </div>
         </div>
+
+        {/* Today's intake vs daily target */}
+        <div className="mt-2 text-sm text-slate-700">
+          <span className="font-bold text-slate-900 tabular-nums">{formatMl(todayIntakeMl)}</span>
+          <span className="text-slate-500"> / {formatMl(settings.dailyTargetMl)} ml hari ini</span>
+        </div>
+        {isTargetReached && (
+          <div className="mt-1 text-xs font-semibold text-emerald-600">Target harian tercapai!</div>
+        )}
 
         {/* Primary Schedule Display as specified in doc Section 9.2 */}
         <div className="mt-4 space-y-1">
@@ -128,10 +133,11 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
           <button
             onClick={onDrinkNow}
-            className={`w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98] ${isAlarmDueOrPast ? 'ring-4 ring-amber-300 animate-pulse' : ''}`}
+            className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors active:scale-[0.98]"
           >
             <Droplets className="w-4 h-4 text-cyan-400" />
             <span>Sudah Minum Sekarang</span>
+            <span className="text-xs font-medium text-cyan-300">+{settings.glassMl} ml</span>
           </button>
 
           <button

@@ -16,6 +16,7 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  GlassWater,
 } from 'lucide-react';
 import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
@@ -38,6 +39,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [name, setName] = useState(settings.name);
   const [intervalMinutes, setIntervalMinutes] = useState(settings.intervalMinutes);
   const [snoozeMinutes, setSnoozeMinutes] = useState(settings.snoozeMinutes);
+  const [dailyTargetMl, setDailyTargetMl] = useState(settings.dailyTargetMl);
+  const [glassMl, setGlassMl] = useState(settings.glassMl);
   const [soundType, setSoundType] = useState<SoundType>(settings.soundType);
   const [volume, setVolume] = useState(settings.volume);
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(settings.quietHoursEnabled);
@@ -74,6 +77,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setName(settings.name);
     setIntervalMinutes(settings.intervalMinutes);
     setSnoozeMinutes(settings.snoozeMinutes);
+    setDailyTargetMl(settings.dailyTargetMl);
+    setGlassMl(settings.glassMl);
     setSoundType(settings.soundType);
     setVolume(settings.volume);
     setQuietHoursEnabled(settings.quietHoursEnabled);
@@ -129,8 +134,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   const validate = (): string | null => {
-    // Validation according to Section 11 of PDF
     if (!name.trim()) return 'Nama pengguna tidak boleh kosong';
+    if (!dailyTargetMl || dailyTargetMl < 500) return 'Target harian minimal 500 ml';
+    if (dailyTargetMl > 6000) return 'Target harian maksimal 6000 ml';
+    if (!glassMl || glassMl < 50) return 'Jumlah sekali minum minimal 50 ml';
+    if (glassMl > 1000) return 'Jumlah sekali minum maksimal 1000 ml';
+    if (glassMl > dailyTargetMl) return 'Jumlah sekali minum tidak boleh melebihi target harian';
     if (!intervalMinutes || intervalMinutes <= 0) return 'Interval minum tidak boleh kosong atau 0';
     if (intervalMinutes < 15) return 'Batas minimum interval adalah 15 menit';
     if (intervalMinutes > 720) return 'Batas maksimum interval adalah 12 jam (720 menit)';
@@ -158,6 +167,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         name: name.trim(),
         intervalMinutes,
         snoozeMinutes,
+        dailyTargetMl,
+        glassMl,
         soundType,
         volume,
         quietHoursEnabled,
@@ -250,7 +261,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <span>Pengaturan Aiya</span>
         </h1>
         <p className="text-xs text-slate-500 mt-1">
-          Sesuaikan ritme pengingat, durasi tunda, dan preferensi suara air.
+          Sesuaikan target minum, ritme pengingat, durasi tunda, dan preferensi suara air.
         </p>
 
       </div>
@@ -307,7 +318,105 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </div>
 
-        {/* Section: Interval & Snooze (Core Spec Section 5.1 & 22.2) */}
+        {/* Section: Daily water target */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+            <GlassWater className="w-4 h-4 text-sky-600" />
+            <h2 className="text-sm font-bold text-slate-900">Target Minum Harian</h2>
+          </div>
+
+          {/* Daily target */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="customDailyTarget" className="text-xs font-semibold text-slate-700">
+                Target minum per hari
+              </label>
+              <span className="text-xs font-bold text-sky-600">{dailyTargetMl} ml</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {[1500, 2000, 2500].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setDailyTargetMl(val)}
+                  className={`py-2 px-2 rounded-xl text-xs font-semibold transition-all border ${
+                    dailyTargetMl === val
+                      ? 'bg-sky-50 border-sky-500 text-sky-700 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {val} ml
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-slate-500 whitespace-nowrap">Kustom:</span>
+              <input
+                id="customDailyTarget"
+                type="number"
+                min={500}
+                max={6000}
+                step={50}
+                value={dailyTargetMl}
+                onChange={(e) => setDailyTargetMl(parseInt(e.target.value) || 0)}
+                className="w-24 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-medium focus:outline-hidden focus:border-sky-500"
+              />
+              <span className="text-xs text-slate-600">ml (500 - 6000 ml)</span>
+            </div>
+          </div>
+
+          {/* Amount per drink */}
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="customGlass" className="text-xs font-semibold text-slate-700">
+                Sekali minum (tombol &quot;Sudah Minum&quot;)
+              </label>
+              <span className="text-xs font-bold text-sky-600">{glassMl} ml</span>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 mb-2">
+              {[150, 200, 250, 300].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setGlassMl(val)}
+                  className={`py-2 px-2 rounded-xl text-xs font-semibold transition-all border ${
+                    glassMl === val
+                      ? 'bg-sky-50 border-sky-500 text-sky-700 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {val} ml
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-slate-500 whitespace-nowrap">Kustom:</span>
+              <input
+                id="customGlass"
+                type="number"
+                min={50}
+                max={1000}
+                step={10}
+                value={glassMl}
+                onChange={(e) => setGlassMl(parseInt(e.target.value) || 0)}
+                className="w-24 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-medium focus:outline-hidden focus:border-sky-500"
+              />
+              <span className="text-xs text-slate-600">ml (50 - 1000 ml)</span>
+            </div>
+
+            {dailyTargetMl > 0 && glassMl > 0 && (
+              <p className="text-[11px] text-slate-500 mt-2">
+                Setiap kali minum menambah {Math.round((glassMl / dailyTargetMl) * 1000) / 10}% dari target. Butuh sekitar {Math.ceil(dailyTargetMl / glassMl)} kali minum per hari.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Section: Interval & Snooze */}
         <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <Clock className="w-4 h-4 text-sky-600" />

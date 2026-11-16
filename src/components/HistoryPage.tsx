@@ -1,7 +1,7 @@
 import React from 'react';
 import { History, Plus, Droplet } from 'lucide-react';
 import { DrinkLog } from '../types';
-import { formatTimeHM } from '../utils/storage';
+import { formatTimeHM, getIntakeForDayMl, logAmountMl } from '../utils/storage';
 
 interface HistoryPageProps {
   logs: DrinkLog[];
@@ -10,8 +10,11 @@ interface HistoryPageProps {
 
 export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }) => {
   const totalCount = logs.length;
+  const totalMl = logs.reduce((sum, l) => sum + logAmountMl(l), 0);
   const todayKey = new Date().toDateString();
   const todayCount = logs.filter((l) => new Date(l.timestamp).toDateString() === todayKey).length;
+  const todayMl = getIntakeForDayMl(logs);
+  const formatMl = (ml: number) => ml.toLocaleString('id-ID');
 
   return (
     <div className="space-y-6 max-w-xl mx-auto pb-20 md:pb-8">
@@ -47,7 +50,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }
               <span className="text-xs font-normal text-slate-500">kali</span>
             </div>
             <span className="text-[11px] text-emerald-600 mt-1 block">
-              ≈ {(todayCount * 250) / 1000} Liter air
+              {formatMl(todayMl)} ml air
             </span>
           </div>
 
@@ -60,7 +63,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }
               <span className="text-xs font-normal text-slate-500">kali</span>
             </div>
             <span className="text-[11px] text-sky-600 mt-1 block">
-              ≈ {(totalCount * 250) / 1000} Liter air
+              {formatMl(totalMl)} ml air
             </span>
           </div>
         </div>
@@ -96,6 +99,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ logs, onAddManualLog }
                         <span className="text-xs font-bold text-slate-900">
                           {log.action === 'SUDAH' ? 'Minum Setelah Diingatkan' : 'Minum Sebelum Pengingat'}
                         </span>
+                        <span className="text-[11px] font-semibold text-sky-600">+{logAmountMl(log)} ml</span>
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         {log.note || 'Jadwal berikutnya dihitung ulang dari waktu ini'}

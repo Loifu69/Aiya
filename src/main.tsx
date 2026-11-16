@@ -18,10 +18,12 @@ if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       });
   });
 } else if ('serviceWorker' in navigator) {
-  // In dev mode, register so testing offline or install prompt works
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  });
+  // Dev mode: no service worker. Its cache would serve stale source files,
+  // so code changes would not show up. Remove any worker/cache left from earlier runs.
+  navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
+  if ('caches' in window) {
+    caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+  }
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

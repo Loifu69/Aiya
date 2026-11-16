@@ -20,6 +20,7 @@ import {
   deliverNudgeToUser,
   formatTimeHM,
   getActiveUser,
+  getIntakeForDayMl,
   getOutgoingRequests,
   getStoredAccounts,
   getStoredDrinkStatus,
@@ -524,11 +525,12 @@ export default function App() {
       userId: currentUser.id,
       action: wasDue ? 'SUDAH' : 'MANUAL',
       timestamp: nowIso,
+      amountMl: settings.glassMl,
       note: wasDue ? 'Minum setelah pengingat berbunyi' : 'Minum sebelum waktu pengingat',
     }, currentUser.id);
     setLogs((prev) => [newLog, ...prev]);
 
-    setLastFeedbackMessage(`Minum tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
+    setLastFeedbackMessage(`+${settings.glassMl} ml tercatat! Jadwal berikutnya jam ${formatTimeHM(nextTimeIso)}.`);
   }, [currentTimeMs, currentUser, drinkStatus, settings]);
 
   // Test the reminder sound + notification without changing the schedule
@@ -824,6 +826,7 @@ export default function App() {
             settings={settings}
             drinkStatus={drinkStatus}
             currentTimeMs={currentTimeMs}
+            todayIntakeMl={getIntakeForDayMl(logs, currentTimeMs)}
             onDrinkNow={handleDrinkNow}
             onTriggerAlarmNow={handleTriggerAlarmNow}
             onFastForward={handleFastForward}

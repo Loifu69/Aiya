@@ -76,6 +76,10 @@ export function toFriendCode(code?: string | null): string {
 
 export const NUDGE_COOLDOWN_MS = 15 * 60 * 1000;
 
+// Daily water goal defaults
+export const DEFAULT_DAILY_TARGET_ML = 2000;
+export const DEFAULT_GLASS_ML = 250;
+
 // Demo accounts have been removed. These old IDs are purged from browsers that still have them cached.
 export const SEED_ACCOUNTS: UserAccount[] = [];
 const REMOVED_DEMO_IDS = new Set(['user-001', 'user-002', 'user-003', 'user-004']);
@@ -91,6 +95,8 @@ export const DEFAULT_USER: UserSettings = {
   userCode: '',
   intervalMinutes: 180, // 3 hours
   snoozeMinutes: 10,    // 10 minutes
+  dailyTargetMl: DEFAULT_DAILY_TARGET_ML,
+  glassMl: DEFAULT_GLASS_ML,
   soundType: 'river',
   volume: 0.8,
   quietHoursEnabled: false,
@@ -220,6 +226,8 @@ export async function registerAccount(
     userCode,
     intervalMinutes: 180,
     snoozeMinutes: 10,
+    dailyTargetMl: DEFAULT_DAILY_TARGET_ML,
+    glassMl: DEFAULT_GLASS_ML,
     soundType: 'river',
     volume: 0.8,
     quietHoursEnabled: false,
@@ -387,22 +395,17 @@ export async function deleteAccount(
 
 export function getStoredSettings(targetUserId?: string): UserSettings {
   const uid = targetUserId || getActiveSessionUserId() || 'user-001';
-  try {
-    const raw = localStorage.getItem(`aiya_settings_${uid}`);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // fallback
-  }
-
   const accounts = getStoredAccounts();
   const account = accounts.find((a) => a.id === uid);
 
-  return {
+  const defaults: UserSettings = {
     userId: uid,
     name: account?.name || DEFAULT_USER.name,
     userCode: account?.userCode || DEFAULT_USER.userCode,
     intervalMinutes: 180,
     snoozeMinutes: 10,
+    dailyTargetMl: DEFAULT_DAILY_TARGET_ML,
+    glassMl: DEFAULT_GLASS_ML,
     soundType: 'river',
     volume: 0.8,
     quietHoursEnabled: false,
@@ -410,6 +413,15 @@ export function getStoredSettings(targetUserId?: string): UserSettings {
     quietEnd: '07:00',
     isOnboarded: true,
   };
+
+  try {
+    const raw = localStorage.getItem(`aiya_settings_${uid}`);
+    // Older saved settings may miss newer fields (e.g. daily target), so fill them from defaults
+    if (raw) return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    // fallback
+  }
+  return defaults;
 }
 
 export function saveStoredSettings(settings: UserSettings, targetUserId?: string): void {
@@ -509,6 +521,21 @@ export function addStoredLog(log: Omit<DrinkLog, 'id'>, targetUserId?: string): 
     firestoreAddLog(newLog).catch(() => {});
   }
   return newLog;
+}
+
+function isSameLocalDay(aMs: number, bMs: number): boolean {
+  return new Date(aMs).toDateString() === new Date(bMs).toDateString();
+}
+
+export function logAmountMl(log: DrinkLog): number {
+  return typeof log.amountMl === 'number' && log.amountMl > 0 ? log.amountMl : DEFAULT_GLASS_ML;
+}
+
+// Total water drunk on the same calendar day as nowMs
+export function getIntakeForDayMl(logs: DrinkLog[], nowMs = Date.now()): number {
+  return logs
+    .filter((l) => isSameLocalDay(new Date(l.timestamp).getTime(), nowMs))
+    .reduce((sum, l) => sum + logAmountMl(l), 0);
 }
 
 // ----------------- MUTUAL RECIPROCAL FRIENDS -----------------

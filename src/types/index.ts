@@ -17,6 +17,8 @@ export interface UserSettings {
   userCode: string;
   intervalMinutes: number; // e.g. 180 (3 jam)
   snoozeMinutes: number; // e.g. 10 (10 menit)
+  dailyTargetMl: number; // daily water goal, e.g. 2000 ml
+  glassMl: number; // amount added each time "Sudah Minum" is pressed, e.g. 250 ml
   soundType: SoundType;
   volume: number;
   quietHoursEnabled: boolean;
@@ -38,6 +40,7 @@ export interface DrinkLog {
   action: 'SUDAH' | 'MANUAL'; // SUDAH = after reminder was due, MANUAL = before it
   timestamp: string; // ISO
   note?: string;
+  amountMl?: number; // water drunk in this entry (older entries have none -> default glass size)
 }
 
 export interface Friend {
