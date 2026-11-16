@@ -15,6 +15,7 @@ import {
   firestoreGetCredential,
   firestoreGetLoginRecord,
   firestoreSaveDrinkStatus,
+  firestoreUpdateNextAlarm,
   isFirebaseReady,
   MAX_LOGS,
   sanitizeAccount,
@@ -441,18 +442,25 @@ export function getStoredDrinkStatus(targetUserId?: string): DrinkStatus {
   } catch {
     // fallback
   }
+  // Placeholder until the real status arrives from the cloud. No made-up drink time.
   const now = Date.now();
   const settings = getStoredSettings(uid);
   const nextTime = new Date(now + settings.intervalMinutes * 60 * 1000).toISOString();
   return {
     userId: uid,
-    lastDrinkAt: new Date(now - 10 * 60 * 1000).toISOString(),
+    lastDrinkAt: null,
     dueAt: nextTime,
     nextAlarmAt: nextTime,
   };
 }
 
-export function saveStoredDrinkStatus(status: DrinkStatus, targetUserId?: string): void {
+// cloud: 'full' pushes the whole status (a real drink / new schedule),
+// 'nextAlarm' only moves the reminder time, 'none' keeps it on this device (e.g. data that came from the cloud)
+export function saveStoredDrinkStatus(
+  status: DrinkStatus,
+  targetUserId?: string,
+  cloud: 'full' | 'nextAlarm' | 'none' = 'full'
+): void {
   const uid = targetUserId || status.userId || getActiveSessionUserId() || 'user-001';
   try {
     localStorage.setItem(`aiya_status_${uid}`, JSON.stringify(status));
@@ -460,10 +468,14 @@ export function saveStoredDrinkStatus(status: DrinkStatus, targetUserId?: string
     // ignore
   }
 
-  // Push the active user's own status to cloud so friends see it live
-  if (uid === getActiveSessionUserId() && isFirebaseReady()) {
-    firestoreSaveDrinkStatus(uid, { ...status, userId: uid }).catch(() => { });
+  if (cloud === 'none' || uid !== getActiveSessionUserId() || !isFirebaseReady()) return;
+  if (cloud === 'nextAlarm') {
+    firestoreUpdateNextAlarm(uid, status.nextAlarmAt).catch(() => { });
+    return;
   }
+
+  // Push the active user's own status to cloud so friends and other devices see it live
+  firestoreSaveDrinkStatus(uid, { ...status, userId: uid }).catch(() => { });
 }
 
 export function getStoredLogs(targetUserId?: string): DrinkLog[] {

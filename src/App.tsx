@@ -66,7 +66,8 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import {
   firestoreAddLog,
-  firestoreGetLogs,
+  firestoreSubscribeDrinkStatus,
+  firestoreSubscribeLogs,
   firestoreSendFriendRequest,
   firestoreSubscribeRequests,
   firestoreSubscribeOutgoingRequests,
@@ -180,12 +181,32 @@ export default function App() {
     isSoundMutedRef.current = isSoundMuted;
   }, [isSoundMuted]);
 
+  // True once this device has the real drink status from the cloud.
+  // Until then the local copy may be a placeholder (new device) or outdated.
+  const [statusSynced, setStatusSynced] = useState(false);
+
   // Firestore Realtime Listeners for Cross-Device Synchronization
   useEffect(() => {
     if (!currentUser || !isFirebaseReady()) return;
 
-    // 1. Ensure active account and status are stored in cloud Firestore
+    // 1. Ensure active account exists in cloud (settings/status are only created if missing)
     firestoreRegisterAccount(currentUser, settings, drinkStatus).catch(() => {});
+
+    // 1b. Own drink status: the cloud copy is the source of truth for every device.
+    //     Live, so drinking on the phone updates the laptop (and vice versa).
+    setStatusSynced(false);
+    const statusFallback = window.setTimeout(() => setStatusSynced(true), 5000);
+    const unsubStatus = firestoreSubscribeDrinkStatus(currentUser.id, (cloudStatus) => {
+      const synced: DrinkStatus = {
+        userId: currentUser.id,
+        lastDrinkAt: cloudStatus.lastDrinkAt ?? null,
+        dueAt: cloudStatus.dueAt,
+        nextAlarmAt: cloudStatus.nextAlarmAt,
+      };
+      setDrinkStatus(synced);
+      saveStoredDrinkStatus(synced, currentUser.id, 'none');
+      setStatusSynced(true);
+    });
 
     // 2. Load all registered accounts from Firestore to enable friend discovery across devices
     firestoreGetAllAccounts().then((cloudAccounts) => {
@@ -239,18 +260,22 @@ export default function App() {
     // 2b'. Keep this device registered for background (push) reminders if already allowed
     syncPush(currentUser.id).catch(() => {});
 
-    // 2c. Load drink history from cloud; upload any entries only stored on this device
-    firestoreGetLogs(currentUser.id).then((cloudLogs) => {
-      if (!cloudLogs) return;
+    // 2c. Live drink history from cloud (drinks from other devices show up immediately).
+    //     On the first load, upload any entries that only exist on this device.
+    let logsUploaded = false;
+    const unsubLogs = firestoreSubscribeLogs(currentUser.id, (cloudLogs) => {
       const local = getStoredLogs(currentUser.id);
-      const cloudIds = new Set(cloudLogs.map((l) => l.id));
-      local
-        .filter((l) => !cloudIds.has(l.id))
-        .forEach((l) => firestoreAddLog({ ...l, userId: currentUser.id }).catch(() => {}));
+      if (!logsUploaded) {
+        logsUploaded = true;
+        const cloudIds = new Set(cloudLogs.map((l) => l.id));
+        local
+          .filter((l) => !cloudIds.has(l.id))
+          .forEach((l) => firestoreAddLog({ ...l, userId: currentUser.id }).catch(() => {}));
+      }
       const merged = mergeLogs(cloudLogs, local);
       saveStoredLogs(merged, currentUser.id);
       setLogs(merged);
-    }).catch(() => {});
+    });
 
     // 3. Listen to incoming friend requests in real-time
     const unsubRequests = firestoreSubscribeRequests(currentUser, (cloudReqs) => {
@@ -305,6 +330,9 @@ export default function App() {
     });
 
     return () => {
+      window.clearTimeout(statusFallback);
+      if (unsubStatus) unsubStatus();
+      if (unsubLogs) unsubLogs();
       if (unsubRequests) unsubRequests();
       if (unsubOutgoing) unsubOutgoing();
       if (unsubFriends) unsubFriends();
@@ -496,6 +524,8 @@ export default function App() {
   // dueAt stays the same, so friends see "Terlambat" and can nudge.
   useEffect(() => {
     if (!currentUser) return;
+    // Wait for the real status from the cloud so an outdated copy doesn't ring by mistake
+    if (isFirebaseReady() && !statusSynced) return;
     const nextAlarmMs = new Date(drinkStatus.nextAlarmAt).getTime();
     if (currentTimeMs < nextAlarmMs) return;
 
@@ -506,8 +536,9 @@ export default function App() {
       nextAlarmAt: new Date(currentTimeMs + settings.snoozeMinutes * 60 * 1000).toISOString(),
     };
     setDrinkStatus(updated);
-    saveStoredDrinkStatus(updated, currentUser.id);
-  }, [currentUser, currentTimeMs, drinkStatus, settings, ringReminder]);
+    // Only the reminder time moves; never overwrite lastDrinkAt/dueAt from here
+    saveStoredDrinkStatus(updated, currentUser.id, 'nextAlarm');
+  }, [currentUser, currentTimeMs, drinkStatus, settings, ringReminder, statusSynced]);
 
   // Handler: "Sudah Minum Sekarang" -> stops reminders, schedules next drink
   const handleDrinkNow = useCallback(() => {

@@ -227,15 +227,14 @@ export async function firestoreRegisterAccount(
 
     // Save account (public fields only)
     await setDoc(doc(db, 'accounts', account.id), sanitizeAccount(account));
-    // Save settings
-    await setDoc(doc(db, 'settings', account.id), settings);
-    // Save status only if cloud has none or local one is newer (avoid stale overwrite on new device)
+    // Settings and drink status: the cloud copy is the source of truth. Only create them
+    // when missing, so a new device (with placeholder local data) never overwrites them.
+    const settingsRef = doc(db, 'settings', account.id);
+    if (!(await getDoc(settingsRef)).exists()) {
+      await setDoc(settingsRef, settings);
+    }
     const statusRef = doc(db, 'statuses', account.id);
-    const existing = await getDoc(statusRef);
-    const cloudStatus = existing.exists() ? (existing.data() as DrinkStatus) : null;
-    const cloudMs = cloudStatus?.lastDrinkAt ? new Date(cloudStatus.lastDrinkAt).getTime() : 0;
-    const localMs = status.lastDrinkAt ? new Date(status.lastDrinkAt).getTime() : 0;
-    if (!cloudStatus || localMs > cloudMs) {
+    if (!(await getDoc(statusRef)).exists()) {
       await setDoc(statusRef, { ...status, userId: account.id });
     }
     return true;
@@ -431,6 +430,19 @@ export async function firestoreSaveDrinkStatus(
     await setDoc(doc(db, 'statuses', userId), status, { merge: true });
   } catch (err) {
     console.error('Firestore save status error:', err);
+  }
+}
+
+// Only moves the next reminder time. Used by the repeating reminder loop so a device
+// with an outdated local copy can't overwrite lastDrinkAt/dueAt set by another device.
+export async function firestoreUpdateNextAlarm(userId: string, nextAlarmAt: string): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+
+  try {
+    await setDoc(doc(db, 'statuses', userId), { nextAlarmAt }, { merge: true });
+  } catch (err) {
+    console.error('Firestore update next alarm error:', err);
   }
 }
 
@@ -915,4 +927,26 @@ export async function firestoreDeletePushSubscription(id: string): Promise<void>
   } catch (err) {
     console.error('Firestore delete push subscription error:', err);
   }
+}
+
+// Live drink history, so a drink recorded on one device shows up on the others right away
+export function firestoreSubscribeLogs(
+  userId: string,
+  onChange: (logs: DrinkLog[]) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  return onSnapshot(
+    query(collection(db, 'drinkLogs'), where('userId', '==', userId)),
+    (snap) => {
+      onChange(
+        snap.docs
+          .map((d) => d.data() as DrinkLog)
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, MAX_LOGS)
+      );
+    },
+    (err) => console.warn('Drink logs listener:', err)
+  );
 }
