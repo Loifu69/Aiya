@@ -50,6 +50,10 @@ function devApi(): Plugin {
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss(), devApi()],
+    define: {
+      // Short commit id of this build (Vercel sets VERCEL_GIT_COMMIT_SHA); shows which version a device runs
+      __AIYA_BUILD__: JSON.stringify((process.env.VERCEL_GIT_COMMIT_SHA || 'dev').slice(0, 7)),
+    },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname || '.', '.'),

@@ -5,6 +5,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocFromServer,
   getDocs,
   collection,
   query,
@@ -262,12 +263,17 @@ export async function firestoreSaveDrinkStatus(
 
 // Only moves the next reminder time. Used by the repeating reminder loop so a device
 // with an outdated local copy can't overwrite lastDrinkAt/dueAt set by another device.
-export async function firestoreUpdateNextAlarm(userId: string, nextAlarmAt: string): Promise<void> {
+export async function firestoreUpdateNextAlarm(
+  userId: string,
+  nextAlarmAt: string,
+  lastRing?: Record<string, string>
+): Promise<void> {
   const { db } = initFirebase();
   if (!db) return;
 
   try {
-    await setDoc(doc(db, 'statuses', userId), { nextAlarmAt }, { merge: true });
+    // lastRing: which device rang and what schedule it saw (for tracking down stray reminders)
+    await setDoc(doc(db, 'statuses', userId), lastRing ? { nextAlarmAt, lastRing } : { nextAlarmAt }, { merge: true });
   } catch (err) {
     console.error('Firestore update next alarm error:', err);
   }
@@ -284,6 +290,18 @@ export async function firestoreUpdateIntake(
     await setDoc(doc(db, 'statuses', userId), intake, { merge: true });
   } catch (err) {
     console.error('Firestore update intake error:', err);
+  }
+}
+
+// Reads the status straight from the server (not a cached copy). null if offline/failed.
+export async function firestoreFetchDrinkStatus(userId: string): Promise<DrinkStatus | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+  try {
+    const snap = await getDocFromServer(doc(db, 'statuses', userId));
+    return snap.exists() ? (snap.data() as DrinkStatus) : null;
+  } catch {
+    return null;
   }
 }
 

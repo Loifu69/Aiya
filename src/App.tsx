@@ -72,6 +72,8 @@ import { HistoryPage } from './components/HistoryPage';
 import { OnboardingData, OnboardingModal } from './components/OnboardingModal';
 import {
   firestoreSubscribeDrinkStatus,
+  firestoreFetchDrinkStatus,
+  firestoreUpdateNextAlarm,
   firestoreUpdateIntake,
   firestoreSubscribeLogs,
   firestoreBackfillLogDayKeys,
@@ -118,6 +120,23 @@ function getInitialTab(): NavTab {
 // Show an OS notification. Prefers the Service Worker (required on Android Chrome,
 // more reliable when the tab is in the background), falls back to new Notification().
 // Drink reminders get two buttons ("Sudah Minum" / "Tutup"), handled in public/sw.js.
+// The reminder is due once both the drink schedule and the snooze time have passed. A snooze
+// time earlier than dueAt is stale (written by a device that hadn't seen the latest drink yet).
+function isAlarmDue(status: { dueAt: string; nextAlarmAt: string }, nowMs: number): boolean {
+  const times = [status.dueAt, status.nextAlarmAt]
+    .map((t) => new Date(t).getTime())
+    .filter((t) => Number.isFinite(t));
+  return times.length === 0 || nowMs >= Math.max(...times);
+}
+
+// Short description of this device, saved with each reminder ("Windows app", "Android tab", ...)
+function deviceLabel(): string {
+  const ua = navigator.userAgent;
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : /Mac/i.test(ua) ? 'Mac' : 'Linux';
+  const installed = window.matchMedia?.('(display-mode: standalone)').matches;
+  return `${os} ${installed ? 'app' : 'tab'}`;
+}
+
 async function showSystemNotification(title: string, body: string, tag: string, isReminder = false) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const options: NotificationOptions & {
@@ -603,26 +622,56 @@ export default function App() {
   // Reminder loop: when the reminder time is reached, ring, then repeat every
   // snoozeMinutes until the user presses "Sudah Minum Sekarang".
   // dueAt stays the same, so friends see "Terlambat" and can nudge.
+  const ringCheckRef = useRef(false);
   useEffect(() => {
     if (!currentUser) return;
     // Wait for the real status from the cloud so an outdated copy doesn't ring by mistake
     if (isFirebaseReady() && !statusSynced) return;
-    // Never ring before the drink schedule: a snooze time earlier than dueAt is stale (written
-    // by a device that hadn't seen the latest drink yet), so the later of the two wins.
-    const times = [drinkStatus.dueAt, drinkStatus.nextAlarmAt]
-      .map((t) => new Date(t).getTime())
-      .filter((t) => Number.isFinite(t));
-    if (times.length > 0 && currentTimeMs < Math.max(...times)) return;
+    if (!isAlarmDue(drinkStatus, currentTimeMs)) return;
+    if (ringCheckRef.current) return; // a check is already running
+    ringCheckRef.current = true;
+    const uid = currentUser.id;
 
-    ringReminder(currentTimeMs);
+    (async () => {
+      // Last check against the server itself: if another device already recorded a drink (or the
+      // schedule moved), this copy is outdated -> take the server's status and stay quiet.
+      if (isFirebaseReady()) {
+        const fresh = await firestoreFetchDrinkStatus(uid);
+        if (fresh && !isAlarmDue(fresh, Date.now() + simOffsetRef.current)) {
+          const synced: DrinkStatus = {
+            userId: uid,
+            lastDrinkAt: fresh.lastDrinkAt ?? null,
+            dueAt: fresh.dueAt,
+            nextAlarmAt: fresh.nextAlarmAt,
+          };
+          setDrinkStatus(synced);
+          saveStoredDrinkStatus(synced, uid, 'none');
+          return;
+        }
+      }
 
-    const updated: DrinkStatus = {
-      ...drinkStatus,
-      nextAlarmAt: new Date(currentTimeMs + settings.snoozeMinutes * 60 * 1000).toISOString(),
-    };
-    setDrinkStatus(updated);
-    // Only the reminder time moves; never overwrite lastDrinkAt/dueAt from here
-    saveStoredDrinkStatus(updated, currentUser.id, 'nextAlarm');
+      const nowMs = Date.now() + simOffsetRef.current;
+      ringReminder(nowMs);
+
+      const updated: DrinkStatus = {
+        ...drinkStatus,
+        nextAlarmAt: new Date(nowMs + settings.snoozeMinutes * 60 * 1000).toISOString(),
+      };
+      setDrinkStatus(updated);
+      // Only the reminder time moves; never overwrite lastDrinkAt/dueAt from here
+      saveStoredDrinkStatus(updated, uid, 'none');
+      if (isFirebaseReady()) {
+        firestoreUpdateNextAlarm(uid, updated.nextAlarmAt, {
+          at: new Date(nowMs).toISOString(),
+          device: deviceLabel(),
+          build: __AIYA_BUILD__,
+          sawDueAt: drinkStatus.dueAt,
+          sawNextAlarmAt: drinkStatus.nextAlarmAt,
+        }).catch(() => {});
+      }
+    })().finally(() => {
+      ringCheckRef.current = false;
+    });
   }, [currentUser, currentTimeMs, drinkStatus, settings, ringReminder, statusSynced]);
 
   // Last recorded drink, so the user can undo an accidental press
