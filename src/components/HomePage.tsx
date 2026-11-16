@@ -133,11 +133,11 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
           <button
             onClick={onDrinkNow}
-            className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors active:scale-[0.98]"
+            className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-[#0369a1] dark:hover:bg-[#0284c7] dark:text-[#f8fafc] font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors active:scale-[0.98]"
           >
-            <Droplets className="w-4 h-4 text-cyan-400" />
+            <Droplets className="w-4 h-4 text-cyan-400 dark:text-[#a5f3fc]" />
             <span>Sudah Minum Sekarang</span>
-            <span className="text-xs font-medium text-cyan-300">+{settings.glassMl} ml</span>
+            <span className="text-xs font-medium text-cyan-300 dark:text-[#cffafe]">+{settings.glassMl} ml</span>
           </button>
 
           <button

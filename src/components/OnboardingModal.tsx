@@ -23,7 +23,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onComp
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-300">
       <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-sky-100 text-center relative overflow-hidden">
         {/* Soft background light */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-sky-100/60 rounded-full blur-2xl -z-10" />

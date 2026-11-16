@@ -108,7 +108,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
               }}
               className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all ${
                 mode === 'login'
-                  ? 'bg-white text-slate-900 shadow-sm'
+                  ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-sm'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -123,7 +123,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, onOpenCloudSy
               }}
               className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all ${
                 mode === 'register'
-                  ? 'bg-white text-slate-900 shadow-sm'
+                  ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-sm'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >

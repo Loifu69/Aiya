@@ -2,7 +2,9 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { setupAudioUnlock } from './utils/audio';
+import { initTheme } from './utils/theme';
 
+initTheme();
 setupAudioUnlock();
 
 // Register PWA Service Worker

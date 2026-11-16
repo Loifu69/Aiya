@@ -128,7 +128,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
               onClick={() => setActiveTab('list')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 activeTab === 'list'
-                  ? 'bg-white text-slate-900 shadow-xs'
+                  ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -138,7 +138,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
               onClick={() => setActiveTab('requests')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all relative cursor-pointer ${
                 activeTab === 'requests'
-                  ? 'bg-white text-slate-900 shadow-xs'
+                  ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -153,7 +153,7 @@ export const FriendsPage: React.FC<FriendsPageProps> = ({
               onClick={() => setActiveTab('add')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 activeTab === 'add'
-                  ? 'bg-white text-slate-900 shadow-xs'
+                  ? 'bg-white dark:bg-[#334155] text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >

@@ -21,6 +21,7 @@ import {
 import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
 import { BackgroundReminderCard } from './BackgroundReminderCard';
+import { ThemeCard } from './ThemeCard';
 
 interface SettingsPageProps {
   currentUser: UserAccount;
@@ -220,7 +221,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           role="dialog"
           aria-modal="true"
           aria-labelledby="save-confirm-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
         >
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-sky-100 space-y-4 text-center">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-sky-100 flex items-center justify-center text-sky-600">
@@ -266,6 +267,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </p>
 
       </div>
+
+      {/* Light / dark mode (applies immediately, per device) */}
+      <ThemeCard />
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Section: Profile */}
@@ -685,7 +689,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       {/* Delete Account Password Confirmation Modal */}
       {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-rose-100 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">
