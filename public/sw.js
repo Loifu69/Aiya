@@ -1,5 +1,5 @@
 // Aiya PWA Service Worker
-const CACHE_NAME = 'aiya-pwa-v2';
+const CACHE_NAME = 'aiya-pwa-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -77,6 +77,31 @@ self.addEventListener('notificationclick', (event) => {
         if ('focus' in client) return client.focus();
       }
       if (self.clients.openWindow) return self.clients.openWindow('/#home');
+    })
+  );
+});
+
+// Background reminder sent by the server (api/send-reminders.ts).
+// Shown even when Aiya is closed, as long as the browser is running.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+
+  const title = data.title || 'Aiya: Waktunya Minum!';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || 'Jangan lupa minum air, lalu tekan "Sudah Minum".',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: data.tag || 'aiya-drink',
+      renotify: true,
+      requireInteraction: true,
+      vibrate: [300, 150, 300],
+      data: { url: data.url || '/#home' },
     })
   );
 });

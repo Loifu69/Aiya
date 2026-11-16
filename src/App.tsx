@@ -53,6 +53,8 @@ import {
   stopWaterSound,
 } from './utils/audio';
 
+import { disablePush, syncPush } from './utils/push';
+
 import { AuthPage } from './components/AuthPage';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
@@ -234,6 +236,9 @@ export default function App() {
       }
     }).catch(() => {});
 
+    // 2b'. Keep this device registered for background (push) reminders if already allowed
+    syncPush(currentUser.id).catch(() => {});
+
     // 2c. Load drink history from cloud; upload any entries only stored on this device
     firestoreGetLogs(currentUser.id).then((cloudLogs) => {
       if (!cloudLogs) return;
@@ -386,6 +391,8 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     stopWaterSound();
+    // This device should stop receiving background reminders for the account
+    disablePush().catch(() => {});
     logoutUser();
     setCurrentUser(null);
   }, []);
@@ -395,6 +402,7 @@ export default function App() {
     const res = await deleteAccount(currentUser.id, password);
     if (res.success) {
       stopWaterSound();
+      disablePush().catch(() => {});
       setCurrentUser(null);
       setAllAccounts(getStoredAccounts());
     }

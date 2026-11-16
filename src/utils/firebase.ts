@@ -320,6 +320,7 @@ export async function firestoreDeleteAccount(userId: string): Promise<boolean> {
       ['nudges', 'fromUserId'],
       ['nudges', 'toUserId'],
       ['drinkLogs', 'userId'],
+      ['pushSubscriptions', 'userId'],
     ];
     for (const [col, field] of targets) {
       const snap = await getDocs(query(collection(db, col), where(field, '==', userId)));
@@ -880,5 +881,38 @@ export async function firestoreGetLogs(userId: string): Promise<DrinkLog[] | nul
   } catch (err) {
     console.error('Firestore get logs error:', err);
     return null;
+  }
+}
+
+// ----------------- PUSH SUBSCRIPTIONS (background reminders) -----------------
+
+export interface StoredPushSubscription {
+  userId: string;
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  timeZone: string;
+  userAgent: string;
+  updatedAt: string;
+}
+
+export async function firestoreSavePushSubscription(id: string, sub: StoredPushSubscription): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+  try {
+    await setDoc(doc(db, 'pushSubscriptions', id), sub);
+    return true;
+  } catch (err) {
+    console.error('Firestore save push subscription error:', err);
+    return false;
+  }
+}
+
+export async function firestoreDeletePushSubscription(id: string): Promise<void> {
+  const { db } = initFirebase();
+  if (!db) return;
+  try {
+    await deleteDoc(doc(db, 'pushSubscriptions', id));
+  } catch (err) {
+    console.error('Firestore delete push subscription error:', err);
   }
 }

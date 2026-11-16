@@ -60,6 +60,11 @@ function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Plain SHA-256 of a string (hex). Used for stable doc ids, not for passwords.
+export function sha256Hex(text: string): string {
+  return toHex(sha256(new TextEncoder().encode(text)));
+}
+
 export const PASSWORD_ALGO = 'sha256-x2000';
 const ITERATIONS = 2000;
 

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { SoundType, UserAccount, UserSettings } from '../types';
 import { playWaterSound, stopWaterSound } from '../utils/audio';
+import { BackgroundReminderCard } from './BackgroundReminderCard';
 
 interface SettingsPageProps {
   currentUser: UserAccount;
@@ -518,7 +519,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </div>
 
-        {/* Section: Sound (Section 5.2 & 12) */}
+        {/* Section: Background reminders (Web Push) */}
+        <BackgroundReminderCard userId={currentUser.id} />
+
+        {/* Section: Sound */}
         <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <Volume2 className="w-4 h-4 text-sky-600" />
