@@ -76,6 +76,7 @@ describe('processDueReminders', () => {
       eka: { dueAt: iso(-5 * MIN), nextAlarmAt: iso(-1000) }, // device gone
       fina: { dueAt: iso(-5 * MIN), nextAlarmAt: iso(-1000), intakeDate: '2026-11-16', intakeMl: 2100 }, // target reached
       fajar: { dueAt: iso(60 * MIN), nextAlarmAt: iso(60 * MIN) }, // not due
+      gita: { dueAt: iso(150 * MIN), nextAlarmAt: iso(-2 * MIN) }, // stale snooze after drinking
     };
     const { store, deleted } = makeStore({
       statuses,
@@ -84,7 +85,7 @@ describe('processDueReminders', () => {
         cici: { snoozeMinutes: 10, quietHoursEnabled: true, quietStart: '07:30', quietEnd: '09:00' },
         fina: { stopWhenTargetReached: true, dailyTargetMl: 2000 },
       },
-      subs: { alice: [sub('a1', 'Asia/Jakarta'), sub('a2')], cici: [sub('c1', 'Asia/Jakarta')], dodi: [sub('d1')], eka: [sub('e1')], fina: [sub('f1', 'Asia/Jakarta')] },
+      subs: { gita: [sub('g1')], alice: [sub('a1', 'Asia/Jakarta'), sub('a2')], cici: [sub('c1', 'Asia/Jakarta')], dodi: [sub('d1')], eka: [sub('e1')], fina: [sub('f1', 'Asia/Jakarta')] },
     });
     const sent: any[] = [];
     const send: rem.SendPush = async (s, p) => {
@@ -93,7 +94,7 @@ describe('processDueReminders', () => {
     };
 
     const summary = await rem.processDueReminders(store, send, now, rem.ticketMaker('secret', now));
-    expect(summary).toEqual({ due: 6, sent: 1, quiet: 1, noDevice: 1, removedDevices: 1, skippedChanged: 1, targetReached: 1, failed: 0 });
+    expect(summary).toEqual({ due: 7, sent: 1, quiet: 1, noDevice: 1, removedDevices: 1, skippedChanged: 1, notDueYet: 1, targetReached: 1, failed: 0 });
     expect(sent.map((s) => s.id).sort()).toEqual(['a1', 'a2']);
     expect(sent[0].body).toMatch(/terlambat minum 12 menit/);
     expect(sent[0].drink.userId).toBe('alice');
@@ -103,6 +104,7 @@ describe('processDueReminders', () => {
     expect(statuses.fina.nextAlarmAt).toBe(iso(10 * MIN)); // still rescheduled, just silent
     expect(statuses.dodi.nextAlarmAt).toBe(iso(-1000));
     expect(statuses.fajar.nextAlarmAt).toBe(iso(60 * MIN));
+    expect(statuses.gita.nextAlarmAt).toBe(iso(150 * MIN)); // back to the real schedule, no push
   });
 });
 

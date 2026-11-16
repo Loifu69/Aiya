@@ -106,6 +106,7 @@ export interface RunSummary {
   noDevice: number;
   removedDevices: number;
   skippedChanged: number;
+  notDueYet: number;
   targetReached: number;
   failed: number;
 }
@@ -167,12 +168,21 @@ export async function processDueReminders(
   nowMs: number,
   makeTicket?: MakeTicket
 ): Promise<RunSummary> {
-  const summary: RunSummary = { due: 0, sent: 0, quiet: 0, noDevice: 0, removedDevices: 0, skippedChanged: 0, targetReached: 0, failed: 0 };
+  const summary: RunSummary = { due: 0, sent: 0, quiet: 0, noDevice: 0, removedDevices: 0, skippedChanged: 0, notDueYet: 0, targetReached: 0, failed: 0 };
   const due = await store.getDueStatuses(new Date(nowMs).toISOString());
   summary.due = due.length;
 
   await Promise.all(
     due.map(async (status) => {
+      // A snooze time earlier than the drink schedule is stale (a device that hadn't seen the
+      // latest drink yet wrote it). Don't ring; move the reminder back to the real schedule.
+      const dueMs = new Date(status.dueAt).getTime();
+      if (Number.isFinite(dueMs) && dueMs > nowMs) {
+        if (await status.reschedule(status.dueAt)) summary.notDueYet++;
+        else summary.skippedChanged++;
+        return;
+      }
+
       const [settings, subs] = await Promise.all([
         store.getSettings(status.userId),
         store.getSubscriptions(status.userId),

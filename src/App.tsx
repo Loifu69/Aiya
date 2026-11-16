@@ -600,8 +600,12 @@ export default function App() {
     if (!currentUser) return;
     // Wait for the real status from the cloud so an outdated copy doesn't ring by mistake
     if (isFirebaseReady() && !statusSynced) return;
-    const nextAlarmMs = new Date(drinkStatus.nextAlarmAt).getTime();
-    if (currentTimeMs < nextAlarmMs) return;
+    // Never ring before the drink schedule: a snooze time earlier than dueAt is stale (written
+    // by a device that hadn't seen the latest drink yet), so the later of the two wins.
+    const times = [drinkStatus.dueAt, drinkStatus.nextAlarmAt]
+      .map((t) => new Date(t).getTime())
+      .filter((t) => Number.isFinite(t));
+    if (times.length > 0 && currentTimeMs < Math.max(...times)) return;
 
     ringReminder(currentTimeMs);
 
