@@ -1,5 +1,5 @@
 // Aiya PWA Service Worker
-const CACHE_NAME = 'aiya-pwa-v4';
+const CACHE_NAME = 'aiya-pwa-v5';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -7,6 +7,8 @@ const ASSETS_TO_CACHE = [
   '/favicon.svg',
   '/icon-192.png',
   '/icon-512.png',
+  '/icon-maskable-512.png',
+  '/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {

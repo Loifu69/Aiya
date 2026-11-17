@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Droplets } from 'lucide-react';
 
 export interface OnboardingData {
   name: string;
@@ -63,9 +62,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, defaul
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
       <div className="bg-white rounded-[2rem] max-w-md w-full max-h-[92vh] overflow-y-auto p-6 sm:p-8 shadow-2xl border border-sky-100 relative">
         <div className="text-center">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-500 to-cyan-400 text-white flex items-center justify-center mx-auto mb-3 shadow-lg shadow-sky-500/25">
-            <Droplets className="w-8 h-8" />
-          </div>
+          <img src="/favicon.svg" alt="Logo Aiya" className="w-16 h-16 rounded-2xl mx-auto mb-3 shadow-lg shadow-sky-500/25" />
           <h1 className="text-2xl font-black tracking-tight text-slate-900">Selamat datang di Aiya!</h1>
           <p className="text-xs text-slate-500 mt-1 mb-6">Atur sebentar supaya pengingatnya pas buat kamu.</p>
         </div>

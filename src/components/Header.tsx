@@ -1,5 +1,5 @@
 import React from 'react';
-import { Droplets, Volume2, VolumeX, LogOut, Download } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, Download } from 'lucide-react';
 import { UserAccount } from '../types';
 
 interface HeaderProps {
@@ -24,9 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
         {/* Zone 1: Brand title wordmark */}
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-sky-500 to-cyan-400 flex items-center justify-center text-white shadow-sm shadow-sky-500/20">
-            <Droplets className="w-4 h-4" />
-          </div>
+          <img src="/favicon.svg" alt="" className="w-8 h-8 rounded-xl shadow-sm shadow-sky-500/20" />
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <span className="font-bold text-lg tracking-tight text-slate-900">Aiya</span>

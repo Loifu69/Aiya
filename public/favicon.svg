@@ -1,21 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="aiyaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0284c7"/>
-      <stop offset="50%" stop-color="#0ea5e9"/>
-      <stop offset="100%" stop-color="#06b6d4"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.55" stop-color="#0284c7"/>
+      <stop offset="1" stop-color="#075985"/>
     </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#0284c7" flood-opacity="0.35"/>
-    </filter>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#0369a1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.7">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="drop">
+      <path d="M256 112 C256 112 162 226 162 302 a94 94 0 0 0 188 0 C350 226 256 112 256 112 Z"/>
+    </clipPath>
   </defs>
 
-  <!-- Background rounded rect -->
-  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#aiyaGrad)" filter="url(#shadow)"/>
+  <!-- BACKGROUND -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
 
-  <!-- Water Droplet Silhouette -->
-  <path d="M256 112 C256 112, 160 236, 160 304 C160 357 203 400 256 400 C309 400 352 357 352 304 C352 236, 256 112, 256 112 Z" fill="#ffffff"/>
-  
-  <!-- Subtle droplet shine reflection -->
-  <path d="M224 280 C224 248, 244 200, 244 200 C244 200, 208 240, 208 280 C208 296, 216 308, 224 316 C220 306, 224 290, 224 280 Z" fill="#bae6fd" opacity="0.8"/>
+  <!-- Droplet -->
+  <path d="M256 112 C256 112 162 226 162 302 a94 94 0 0 0 188 0 C350 226 256 112 256 112 Z" fill="#ffffff"/>
+  <!-- Water inside the droplet (about half full) -->
+  <g clip-path="url(#drop)">
+    <path d="M140 296 Q 178 274 216 296 T 292 296 T 368 296 V 420 H 140 Z" fill="url(#water)"/>
+    <path d="M140 296 Q 178 274 216 296 T 292 296 T 368 296" fill="none" stroke="#a5f3fc" stroke-width="7" stroke-linecap="round" opacity="0.9"/>
+  </g>
+  <!-- Outline keeps the drop shape crisp against the blue background -->
+  <path d="M256 112 C256 112 162 226 162 302 a94 94 0 0 0 188 0 C350 226 256 112 256 112 Z" fill="none" stroke="#ffffff" stroke-width="10" stroke-linejoin="round"/>
+  <!-- Shine -->
+  <path d="M206 238 C 196 256 192 272 192 288" fill="none" stroke="#bae6fd" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Reminder "ringing" marks -->
+  <g fill="none" stroke="#ffffff" stroke-width="14" stroke-linecap="round">
+    <path d="M196 132 C 178 146 168 164 164 184"/>
+    <path d="M316 132 C 334 146 344 164 348 184"/>
+    <path d="M168 112 C 146 128 132 150 126 174" opacity="0.6"/>
+    <path d="M344 112 C 366 128 380 150 386 174" opacity="0.6"/>
+  </g>
 </svg>

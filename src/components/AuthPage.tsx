@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Droplets,
   Lock,
   User,
   ArrowRight,
@@ -75,9 +74,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess, notice }) => 
         <div className="text-center mb-6">
           <div className="relative inline-flex items-center justify-center mb-3">
             <div className="absolute inset-0 rounded-2xl bg-sky-300/50 animate-ping opacity-60" />
-            <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-500 via-sky-600 to-cyan-500 text-white flex items-center justify-center shadow-xl shadow-sky-500/25">
-              <Droplets className="w-8 h-8" />
-            </div>
+            <img src="/favicon.svg" alt="Logo Aiya" className="relative w-16 h-16 rounded-2xl shadow-xl shadow-sky-500/25" />
           </div>
           <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-sky-600 to-cyan-500 bg-clip-text text-transparent">
             Aiya
