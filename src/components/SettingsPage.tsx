@@ -52,7 +52,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [quietStart, setQuietStart] = useState(settings.quietStart);
   const [quietEnd, setQuietEnd] = useState(settings.quietEnd);
 
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  // Which sound's preview is playing right now (null = none)
+  const [playingSound, setPlayingSound] = useState<SoundType | null>(null);
+  const previewTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+  }, []);
   const [copiedCode, setCopiedCode] = useState(false);
   // Floating toast (fixed top-center, fades out)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -125,18 +130,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
+  // "Dengar" plays that sound for 5 s; pressing another sound switches to it, "Stop" ends it
   const handleToggleSoundPreview = (type: SoundType) => {
-    if (isPlayingAudio) {
-      stopWaterSound();
-      setIsPlayingAudio(false);
-    } else {
-      playWaterSound(type, volume);
-      setIsPlayingAudio(true);
-      setTimeout(() => {
-        stopWaterSound();
-        setIsPlayingAudio(false);
-      }, 5000);
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    previewTimer.current = null;
+    stopWaterSound();
+    if (playingSound === type) {
+      setPlayingSound(null);
+      return;
     }
+    playWaterSound(type, volume);
+    setPlayingSound(type);
+    previewTimer.current = window.setTimeout(() => {
+      stopWaterSound();
+      setPlayingSound(null);
+      previewTimer.current = null;
+    }, 5000);
   };
 
   const validate = (): string | null => {
@@ -591,7 +600,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   onClick={() => handleToggleSoundPreview(sound.id)}
                   className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition-colors ml-2"
                 >
-                  {isPlayingAudio && soundType === sound.id ? (
+                  {playingSound === sound.id ? (
                     <>
                       <Square className="w-3.5 h-3.5 text-rose-600" />
                       <span>Stop</span>
